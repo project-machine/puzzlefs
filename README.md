@@ -38,3 +38,12 @@ For the most part, I think this addresses things there except for two:
   choose a good language (e.g. rust :) for the implementation so that we could
   use the same code in the kernel and userspace, thus easily supporting this
   one.
+
+
+## TODO
+
+* explore chunking algorithms
+* flesh out the rest of the file type metadata
+* consider what "minimal" metadata might look like
+* specify exact algorithm for deriving file content from inodes
+* play around with zstd seekable compression a bit
