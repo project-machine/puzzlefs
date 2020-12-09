@@ -62,8 +62,8 @@
 
     struct chunk {
         hash_value blob;
-        u64 chunk_num;
-        u64 offset;
+        u64 chunk_offset;
+        u64 file_offset;
         u64 len;
     }
 
@@ -83,6 +83,7 @@
 
             // file
             struct {
+                u64 file_size; /* total file size */
                 u64 offest;
             },
         };
@@ -145,9 +146,72 @@ Given a target inode `ino`:
 
 ### Algorithm for looking up file contents
 
-Need to build a map of file length -> chunk contents. I believe this is
-possible+efficient with some data structure like the xarray/maple tree that the
-kernel has.
+Given a target inode `ino`:
+
+
+    struct chunk_info {
+        chunk *chunk;
+        u64 offset_in_chunk;
+        u64 len;
+    }
+
+    inode_chunks = xarray_new()
+    size = binary_search(metadata_refs[0], ino).size
+
+    def have_all_chunks(xa):
+        max_seen = 0
+        xa_for_each_range(xa, ent)
+            // make sure that we have [0, size) populated
+            // i.e. max_seen should == ent.min; max_seen = ent.max
+
+    for each metadata_ref:
+        if have_all_chunks(inode_chunks):
+            break
+
+        // add the inode chunks here
+        i = binary_search(metadata_ref->inodes, ino)
+        if not i:
+            fail("incomplete inode definition")
+
+        def add_chunk(xa, chunk):
+            while 1:
+                existing = xa_find(xa, chunk.chunk_offset, chunk.chunk_offset+chunk.len)
+                if not existing:
+                    xa_store_range(xa, chunk, chunk.file_offset, chunk.file_offset+len)
+                    return
+
+                // does the existing chunk cover the whole range? if so split
+                // it and insert ours
+                if existing.offset + existing.len > chunk.max:
+                    xa_store_range(xa, existing, existing.offset, existing.offset - chunk.offset)
+                    xa_store_range(xa, chunk, chunk.offset, chunk.len)
+                    xa_store_range(xa, existing, existing.offset+chunk.len, existing.offset + existing.len - chunk.len)
+                    return
+
+                // special cases where it only covers the left or right half of
+                // the range, handle as above
+
+
+                // otherwise, remove the whole chunk, as our new chunk subsumes
+                // it, and keep iterating
+                xa_remove(xa, existing)
+
+        for chunk in i.chunks:
+
+                // uh oh, some existing chunk overlaps with our range. let's 
+                find_file_offsets(inode_chunks, chunk)
+                xa_store_range(chunk, chunk.file_offset, chunk.file_offset+len)
+
+Now, when someone causes a fault at offset `off`:
+
+    chunk_info = xa_load(inode_chunks, off)
+    read_from_chunk(chunk, chunk_info.offeset_in_chunk + chunk.file_offset)
+    /*
+     * in reality this is a little more complicated, because you could ask for
+     * more than a single chunk, but in that case you just xa_load(inode_chunks,
+     * off+num_read)
+     */
+
 
 ### Canonicalization
 
