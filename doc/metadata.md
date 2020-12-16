@@ -105,6 +105,13 @@ So we should probably play around with that. Alternatively, we could add some
 kind of wrapper in the specification about this for arbitrary compression
 formats. But it's likely that the compression people themselves will implement
 a better version of this, so it seems like we should try to use theirs first.
+(Maybe not; it looks like zstd just chunks things up in a hard coded chunk
+size, same as we would potentially do. Additionally, there are some proposals
+out there for [storing other kinds of
+metadata](https://github.com/containers/storage/pull/775) in the zstd skippable
+frames, same as the `seekable_format` code does above, and that code currently
+dies if it encounters skippable frames that it doesn't understand. So perhaps
+we should just design our own seekable container format.)
 
 In any case, for now this document assumes this is possible without specifying
 how it is done.
