@@ -3,6 +3,8 @@
 Puzzlefs consists of two parts: a metadata format for inode information, and
 actual filesystem data chunks, defined by various chunking algorithms.
 
+All enums are encoded as u32s; all encodings are little endian.
+
 All puzzlefs blobs are wrapped in the following structure:
 
     enum hash {
