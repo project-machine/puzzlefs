@@ -31,9 +31,4 @@ See metadata.md
 
 ## Chunking
 
-Idea here is to define at least one algorithm for chunking filesystem data, but
-allow for hot swapping of these algorithms and their parameters. Algorithms
-should have one way to represent a file.
-
-This should definitely be rabin fingerprint/rolling hash based. casync is the
-obvious prior art here.
+See chunking.md
