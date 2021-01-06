@@ -44,6 +44,11 @@
         wht,
     }
 
+    struct string {
+        u64 len;
+        char val[];
+    };
+
     struct dirent {
         u64 ino;
         string name;
@@ -72,19 +77,56 @@
         chunk chunks[];
     }
 
+    // this must be a fixed size so we can binary search over it easily
     struct inode {
         u64 ino;
         inode_type type;
         union {
-            // directory
+            // fifo
             struct {
-                u64 offset;
+                /* nothing additional about fifos */
             },
 
-            // file
+            // chr
+            struct {
+                dev_t major;
+                dev_t minor;
+            },
+
+            // dir
+            struct {
+                u64 dir_offset;
+            },
+
+            // blk; do we even want these? seems like maybe not since they're
+            // system specific.
+            struct {
+                dev_t major;
+                dev_t minor;
+            },
+
+            // reg
             struct {
                 u64 file_size; /* total file size */
-                u64 offest;
+                u64 file_offset;
+            },
+
+            // lnk
+            struct {
+                string target[PATH_MAX];
+                #define LNK_HARD 1
+                #define LNK_SOFT 2
+                u32 flags;
+            },
+
+            // sock; this seems like it should probably also be ignored?
+            struct {
+                /* no extra info */
+            },
+
+            // wht, unused for now
+            struct {
+                /* no extra info */
             },
         };
     }
