@@ -16,10 +16,8 @@
     };
     struct metadata_ref {
         metadata_type type;
-        union {
-            u64 offset;
-            hash_value blob;
-        }
+        hash_value blob;
+        u64 offset;
     }
 
     struct metadata {
@@ -66,8 +64,7 @@
     }
 
     struct chunk {
-        hash_value blob;
-        u64 chunk_offset;
+        metadata_ref chunk;
         u64 file_offset;
         u64 len;
     }
