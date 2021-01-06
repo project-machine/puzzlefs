@@ -78,6 +78,10 @@
     struct inode {
         u64 ino;
         inode_type type;
+        u32 uid;
+        u32 gid;
+        u16 mode;
+        u64 mtime, atime, ctime; /* seems like we should require these? */
         union {
             // fifo
             struct {
@@ -126,7 +130,25 @@
                 /* no extra info */
             },
         };
+
+        metadata_ref inode_addl; /* ref to the additional inode metadata */
     }
+
+    /*
+     * additional inode metadata; here's where we put everything that's not
+     * fixed length so it doesn't screw up our binary search for inodes.
+     */
+    struct xattr {
+        u64 key_len;
+        char key[];
+        u64 value_len;
+        char value[];
+    }
+    struct inode_addl {
+        u64 xattrs_len;
+        xattr xattrs;
+        string lnk_target;
+    };
 
 ### Reading compressed data at an offset
 
