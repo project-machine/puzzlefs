@@ -46,3 +46,10 @@ For the most part, I think this addresses things there except for two:
 * flesh out the rest of the file type metadata
 * consider what "minimal" metadata might look like
 * play around with zstd seekable compression a bit
+
+## Implementation
+
+* `format/` is the code for serializing/de-serializing the puzzlefs format
+* `builder/` is the code for building a puzzlefs image
+* `mount/` is the code for fuse mounting a puzzlefs image
+* `exe/` is the executable frontend for the above

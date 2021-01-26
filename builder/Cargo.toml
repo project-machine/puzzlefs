@@ -1,0 +1,16 @@
+[package]
+name = "builder"
+version = "0.1.0"
+authors = ["Tycho Andersen <tycho@tycho.pizza>"]
+edition = "2018"
+
+[dependencies]
+format = { path = "../format" }
+oci = { path = "../oci" }
+walkdir = "2"
+serde_cbor = "*"
+fastcdc = "*"
+
+[dev-dependencies]
+tempfile = "*"
+assert_matches = "*"

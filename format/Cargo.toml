@@ -1,0 +1,11 @@
+[package]
+name = "format"
+version = "0.1.0"
+authors = ["Tycho Andersen <tycho@tycho.pizza>"]
+edition = "2018"
+
+[dependencies]
+serde = { version = "^1.0.27", features = [ "derive" ] }
+serde_cbor = "*"
+nix = "*"
+xattr = "*"
