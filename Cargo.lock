@@ -46,6 +46,7 @@ dependencies = [
  "fastcdc",
  "format",
  "oci",
+ "serde",
  "serde_cbor",
  "tempfile",
  "walkdir",

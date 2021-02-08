@@ -12,7 +12,8 @@ use std::path::Path;
 use walkdir::WalkDir;
 
 use format::{
-    BlobRef, BlobRefKind, DirEnt, FileChunk, FileChunkList, Ino, Inode, InodeAdditional, Rootfs,
+    BlobRef, BlobRefKind, DirEnt, DirList, FileChunk, FileChunkList, Ino, Inode, InodeAdditional,
+    Rootfs,
 };
 use oci::Image;
 
@@ -64,7 +65,7 @@ fn walker(rootfs: &Path) -> WalkDir {
 // (aka the offset is unknown because we haven't accumulated all the inodes yet)
 struct Dir {
     ino: u64,
-    dir_list: Vec<DirEnt>,
+    dir_list: DirList,
     md: fs::Metadata,
     additional: Option<InodeAdditional>,
 }
@@ -74,7 +75,7 @@ impl Dir {
         let name = p.file_name().ok_or_else(|| {
             io::Error::new(io::ErrorKind::Other, format!("no path for {}", p.display()))
         })?;
-        self.dir_list.push(DirEnt {
+        self.dir_list.entries.push(DirEnt {
             name: name.to_os_string(),
             ino,
         });
@@ -210,7 +211,10 @@ pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Rootfs> {
                 Dir {
                     ino: cur_ino,
                     md,
-                    dir_list: Vec::<DirEnt>::new(),
+                    dir_list: DirList {
+                        entries: Vec::<DirEnt>::new(),
+                        look_below: false,
+                    },
                     additional,
                 },
             );
@@ -286,7 +290,7 @@ pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Rootfs> {
         ordered_dirs
             .drain(..)
             .map(|d| {
-                let dirent_offset = inodes_serial_size + dir_buf.len();
+                let dir_list_offset = inodes_serial_size + dir_buf.len();
                 serde_cbor::to_writer(&mut dir_buf, &d.dir_list).map_err(Error::from)?;
                 let additional_ref = d
                     .additional
@@ -303,7 +307,7 @@ pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Rootfs> {
                 Ok(Inode::new_dir(
                     d.ino,
                     &d.md,
-                    dirent_offset as u64,
+                    dir_list_offset as u64,
                     additional_ref,
                 )?)
             })
@@ -363,11 +367,21 @@ pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Rootfs> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Read;
+    use std::io::{Read, Seek};
 
+    use serde::de::{Deserialize, Error};
     use tempfile::tempdir;
 
-    use format::InodeMode;
+    use format::{DirList, InodeMode};
+
+    fn read_one<'a, T: Deserialize<'a>, R: Read>(r: R) -> serde_cbor::Result<T> {
+        // serde complains when we leave extra bytes on the wire, which we often want to do. as a
+        // hack, we create a streaming deserializer for the type we're about to read, and then only
+        // read one value.
+        let mut iter = serde_cbor::Deserializer::from_reader(r).into_iter::<T>();
+        iter.next()
+            .ok_or_else(|| serde_cbor::error::Error::custom("no value"))?
+    }
 
     #[test]
     fn test_fs_generation() {
@@ -389,19 +403,24 @@ mod tests {
         let md = fs::symlink_metadata(image.blob_path().join(FILE_DIGEST)).unwrap();
         assert!(md.is_file());
 
-        let blob = image.open_blob(&rootfs.metadatas[0]).unwrap();
-        let raw_inodes = blob
-            .bytes()
-            .take(inode_encoded_size(2))
-            .collect::<io::Result<Vec<u8>>>()
-            .unwrap();
-        let inodes: Vec<Inode> = serde_cbor::from_reader(raw_inodes.as_slice()).unwrap();
+        let mut blob = image.open_blob(&rootfs.metadatas[0]).unwrap();
+
+        let inodes: Vec<Inode> = read_one(&mut blob).unwrap();
 
         // we can at least deserialize inodes and they look sane
         assert_eq!(inodes.len(), 2);
 
         assert_eq!(inodes[0].ino, 1);
-        assert_matches!(inodes[0].mode, InodeMode::Dir { .. });
+        if let InodeMode::Dir { offset } = inodes[0].mode {
+            println!("seeking to {}", offset);
+            blob.seek(io::SeekFrom::Start(offset)).unwrap();
+            let dir_list: DirList = read_one(&mut blob).unwrap();
+            assert_eq!(dir_list.entries.len(), 1);
+            assert_eq!(dir_list.entries[0].ino, 2);
+            assert_eq!(dir_list.entries[0].name, "SekienAkashita.jpg");
+        } else {
+            assert!(false, "bad inode mode: {:?}", inodes[0].mode);
+        }
         assert_eq!(inodes[0].uid, md.uid());
         assert_eq!(inodes[0].gid, md.gid());
 
