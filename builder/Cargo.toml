@@ -14,3 +14,4 @@ fastcdc = "*"
 [dev-dependencies]
 tempfile = "*"
 assert_matches = "*"
+serde = "*"
