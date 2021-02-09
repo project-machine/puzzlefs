@@ -1,7 +1,4 @@
-#[cfg(test)]
-#[macro_use]
-extern crate assert_matches;
-
+use std::cmp::min;
 use std::collections::HashMap;
 use std::fmt;
 use std::fs;
@@ -111,45 +108,54 @@ fn write_chunks_to_oci(oci: &Image, fcdc: &mut FastCDCWrapper) -> io::Result<Vec
         .collect::<io::Result<Vec<FileChunk>>>()
 }
 
-// merge the first chunk with the previous files and return a BlobRef that references the rest of
-// the file
-fn merge_chunk_and_prev_files(
-    first_chunk: &FileChunk,
+fn take_first_chunk<FileChunk>(v: &mut Vec<FileChunk>) -> io::Result<FileChunk> {
+    if !v.is_empty() {
+        Ok(v.remove(0))
+    } else {
+        Err(io::Error::new(io::ErrorKind::Other, "missing blob"))
+    }
+}
+
+fn merge_chunks_and_prev_files(
+    chunks: &mut Vec<FileChunk>,
     files: &mut Vec<File>,
     prev_files: &mut Vec<File>,
-) -> io::Result<BlobRef> {
-    let mut used = 0;
-    let first_digest = if let BlobRef {
-        kind: BlobRefKind::Other { digest },
-        ..
-    } = first_chunk.blob
-    {
-        digest
+) -> io::Result<FileChunk> {
+    let mut chunk_used = 0;
+    let mut chunk = take_first_chunk(chunks)?;
+
+    for mut file in prev_files.drain(..) {
+        let mut file_used: u64 = Iterator::sum(file.chunk_list.chunks.iter().map(|c| c.len));
+        while file_used < file.md.len() {
+            if chunk_used == chunk.len {
+                chunk_used = 0;
+                chunk = take_first_chunk(chunks)?;
+            }
+
+            let room = min(file.md.len() - file_used, chunk.len - chunk_used);
+            let blob = BlobRef {
+                offset: chunk_used,
+                kind: chunk.blob.kind,
+            };
+            file.chunk_list.chunks.push(FileChunk { blob, len: room });
+            chunk_used += room;
+            file_used += room;
+        }
+        files.push(file);
+    }
+
+    if chunk_used == chunk.len {
+        take_first_chunk(chunks)
     } else {
-        return Err(io::Error::new(io::ErrorKind::Other, "bad blob type"));
-    };
-
-    // drain the list of previous files whose content is at the beginning of this chunk
-    files.extend(prev_files.drain(..).map(|mut p| {
-        let blob = BlobRef {
-            offset: used,
-            kind: BlobRefKind::Other {
-                digest: first_digest,
+        // fix up the first chunk to have the right offset for this file
+        Ok(FileChunk {
+            blob: BlobRef {
+                kind: chunk.blob.kind,
+                offset: chunk_used,
             },
-        };
-        let len = p.md.len();
-        used += len;
-        p.chunk_list.chunks.push(FileChunk { blob, len });
-        p
-    }));
-
-    // now fix up the first chunk to have the right offset for this file
-    Ok(BlobRef {
-        kind: BlobRefKind::Other {
-            digest: first_digest,
-        },
-        offset: used,
-    })
+            len: chunk.len - chunk_used,
+        })
+    }
 }
 
 fn inode_encoded_size(num_inodes: usize) -> usize {
@@ -237,16 +243,10 @@ pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Rootfs> {
                 // of files pending for this chunk
                 prev_files.push(file);
             } else {
-                let first_chunk = written_chunks.first().unwrap();
-                let fixed_blob =
-                    merge_chunk_and_prev_files(first_chunk, &mut files, &mut prev_files)?;
-                file.chunk_list.chunks.push(FileChunk {
-                    len: first_chunk.len - fixed_blob.offset,
-                    blob: fixed_blob,
-                });
-                file.chunk_list
-                    .chunks
-                    .append(&mut written_chunks.split_off(1));
+                let fixed_chunk =
+                    merge_chunks_and_prev_files(&mut written_chunks, &mut files, &mut prev_files)?;
+                file.chunk_list.chunks.push(fixed_chunk);
+                file.chunk_list.chunks.append(&mut written_chunks);
             }
         } else {
             let inode = Inode::new_other(cur_ino, &md, None /* TODO: additional */)?;
@@ -258,17 +258,20 @@ pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Rootfs> {
 
     // all inodes done, we need to finish up the cdc chunking
     fcdc.finish();
-    let written_chunks = write_chunks_to_oci(&oci, &mut fcdc)?;
-    let leftover: u64 = written_chunks.iter().map(|c| c.len).sum();
+    let mut written_chunks = write_chunks_to_oci(&oci, &mut fcdc)?;
 
     // if we have chunks, we should have files too
     assert!(written_chunks.is_empty() || !prev_files.is_empty());
     assert!(!written_chunks.is_empty() || prev_files.is_empty());
 
     if !written_chunks.is_empty() {
-        let first_chunk = written_chunks.first().unwrap();
-        let fixed_blob = merge_chunk_and_prev_files(first_chunk, &mut files, &mut prev_files)?;
-        assert!(leftover == fixed_blob.offset);
+        // merge everything leftover with all previous files. we expect an error here, since the in
+        // put shoudl be exactly consumed and the final take_first_chunk() call should fail. TODO:
+        // rearrange this to be less ugly.
+        merge_chunks_and_prev_files(&mut written_chunks, &mut files, &mut prev_files).unwrap_err();
+
+        // we should have consumed all the chunks.
+        assert!(written_chunks.is_empty());
     }
 
     // total inode serailized size
@@ -412,7 +415,6 @@ mod tests {
 
         assert_eq!(inodes[0].ino, 1);
         if let InodeMode::Dir { offset } = inodes[0].mode {
-            println!("seeking to {}", offset);
             blob.seek(io::SeekFrom::Start(offset)).unwrap();
             let dir_list: DirList = read_one(&mut blob).unwrap();
             assert_eq!(dir_list.entries.len(), 1);
@@ -425,8 +427,15 @@ mod tests {
         assert_eq!(inodes[0].gid, md.gid());
 
         assert_eq!(inodes[1].ino, 2);
-        assert_matches!(inodes[1].mode, InodeMode::Reg { .. });
         assert_eq!(inodes[1].uid, md.uid());
         assert_eq!(inodes[1].gid, md.gid());
+        if let InodeMode::Reg { offset } = inodes[1].mode {
+            blob.seek(io::SeekFrom::Start(offset)).unwrap();
+            let chunk_list: FileChunkList = read_one(&mut blob).unwrap();
+            assert_eq!(chunk_list.chunks.len(), 1);
+            assert_eq!(chunk_list.chunks[0].len, md.len());
+        } else {
+            assert!(false, "bad inode mode: {:?}", inodes[1].mode);
+        }
     }
 }
