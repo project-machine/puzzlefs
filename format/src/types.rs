@@ -41,7 +41,7 @@ pub struct Rootfs {
     pub metadatas: Vec<BlobRef>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub enum BlobRefKind {
     Local,
     Other { digest: [u8; 32] },
