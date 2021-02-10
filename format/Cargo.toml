@@ -9,3 +9,4 @@ serde = { version = "^1.0.27", features = [ "derive" ] }
 serde_cbor = "*"
 nix = "*"
 xattr = "*"
+thiserror = "*"

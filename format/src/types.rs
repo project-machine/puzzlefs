@@ -14,10 +14,25 @@ use nix::sys::stat;
 use serde::de::Error as SerdeError;
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use thiserror::Error;
 
 // To get off the ground here, we just use serde and cbor for most things, except for the fixed
 // size Inode which depends being a fixed size (and cbor won't generate it that way) in the later
 // format.
+
+#[derive(Error, Debug)]
+pub enum WireFormatError {
+    #[error("cannot seek to other blob")]
+    SeekOtherError,
+    #[error("no value present")]
+    ValueMissing,
+    #[error("fs error")]
+    IOError(#[from] io::Error),
+    #[error("deserialization error")]
+    CBORError(#[from] serde_cbor::Error),
+}
+
+pub type Result<T> = std::result::Result<T, WireFormatError>;
 
 /*
  *
@@ -127,7 +142,7 @@ pub struct Inode {
 }
 
 impl Serialize for Inode {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -169,7 +184,7 @@ impl Serialize for Inode {
 }
 
 impl<'de> Deserialize<'de> for Inode {
-    fn deserialize<D>(deserializer: D) -> Result<Inode, D::Error>
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Inode, D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -182,7 +197,7 @@ impl<'de> Deserialize<'de> for Inode {
                 formatter.write_fmt(format_args!("expected {} bytes for Inode", INODE_MODE_SIZE))
             }
 
-            fn visit_bytes<E>(self, v: &[u8]) -> Result<Inode, E>
+            fn visit_bytes<E>(self, v: &[u8]) -> std::result::Result<Inode, E>
             where
                 E: SerdeError,
             {
