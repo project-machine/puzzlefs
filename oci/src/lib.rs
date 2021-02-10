@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use tee::TeeReader;
 use tempfile::NamedTempFile;
 
-use format::{BlobRef, BlobRefKind};
+use format::{BlobRef, BlobRefKind, MetadataBlob};
 
 #[derive(Debug, Copy, Clone)]
 pub struct Descriptor {
@@ -56,12 +56,16 @@ impl<'a> Image<'a> {
         Ok(descriptor)
     }
 
-    pub fn open_blob(&self, r: &BlobRef) -> io::Result<fs::File> {
+    pub fn open_raw_blob(&self, digest: [u8; 32]) -> io::Result<fs::File> {
+        fs::File::open(self.blob_path().join(hex::encode(digest)))
+    }
+
+    pub fn open_metadata_blob(&self, r: &BlobRef) -> io::Result<format::MetadataBlob> {
         match r.kind {
             BlobRefKind::Other { digest } => {
-                let mut f = fs::File::open(self.blob_path().join(hex::encode(digest)))?;
+                let mut f = self.open_raw_blob(digest)?;
                 f.seek(io::SeekFrom::Start(r.offset))?;
-                Ok(f)
+                Ok(MetadataBlob::new(f))
             }
             BlobRefKind::Local => Err(io::Error::new(
                 io::ErrorKind::Other,

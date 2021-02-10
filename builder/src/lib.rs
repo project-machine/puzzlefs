@@ -12,7 +12,7 @@ use format::{
     BlobRef, BlobRefKind, DirEnt, DirList, FileChunk, FileChunkList, Ino, Inode, InodeAdditional,
     Rootfs,
 };
-use oci::Image;
+use oci::{Descriptor, Image};
 
 mod fastcdc_fs;
 use fastcdc_fs::{ChunkWithData, FastCDCWrapper};
@@ -162,7 +162,7 @@ fn inode_encoded_size(num_inodes: usize) -> usize {
     format::cbor_size_of_list_header(num_inodes) + num_inodes * format::INODE_WIRE_SIZE
 }
 
-pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Rootfs> {
+pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Descriptor> {
     let mut dirs = HashMap::<u64, Dir>::new();
     let mut files = Vec::<File>::new();
     let mut pfs_inodes = Vec::<Inode>::new();
@@ -364,27 +364,19 @@ pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Rootfs> {
         },
     }]
     .to_vec();
-    Ok(Rootfs { metadatas })
+
+    let mut rootfs_buf = Vec::new();
+    serde_cbor::to_writer(&mut rootfs_buf, &Rootfs { metadatas })?;
+    oci.put_blob(rootfs_buf.as_slice()).map_err(|e| e.into())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{Read, Seek};
 
-    use serde::de::{Deserialize, Error};
     use tempfile::tempdir;
 
     use format::{DirList, InodeMode};
-
-    fn read_one<'a, T: Deserialize<'a>, R: Read>(r: R) -> serde_cbor::Result<T> {
-        // serde complains when we leave extra bytes on the wire, which we often want to do. as a
-        // hack, we create a streaming deserializer for the type we're about to read, and then only
-        // read one value.
-        let mut iter = serde_cbor::Deserializer::from_reader(r).into_iter::<T>();
-        iter.next()
-            .ok_or_else(|| serde_cbor::error::Error::custom("no value"))?
-    }
 
     #[test]
     fn test_fs_generation() {
@@ -396,7 +388,8 @@ mod tests {
         // test...
         //
         // but once all that's stabalized, we should verify the metadata hash too.
-        let rootfs = build_initial_rootfs(Path::new("./test"), &image).unwrap();
+        let rootfs_desc = build_initial_rootfs(Path::new("./test"), &image).unwrap();
+        let rootfs = Rootfs::new(image.open_raw_blob(rootfs_desc.digest).unwrap()).unwrap();
 
         // there should be a blob that matches the hash of the test data, since it all gets input
         // as one chunk and there's only one file
@@ -406,17 +399,18 @@ mod tests {
         let md = fs::symlink_metadata(image.blob_path().join(FILE_DIGEST)).unwrap();
         assert!(md.is_file());
 
-        let mut blob = image.open_blob(&rootfs.metadatas[0]).unwrap();
-
-        let inodes: Vec<Inode> = read_one(&mut blob).unwrap();
+        let mut blob = image.open_metadata_blob(&rootfs.metadatas[0]).unwrap();
+        let inodes = blob.read_inodes().unwrap();
 
         // we can at least deserialize inodes and they look sane
         assert_eq!(inodes.len(), 2);
 
+        assert_eq!(blob.find_inode(1).unwrap().unwrap(), inodes[0]);
+        assert_eq!(blob.find_inode(2).unwrap().unwrap(), inodes[1]);
+
         assert_eq!(inodes[0].ino, 1);
         if let InodeMode::Dir { offset } = inodes[0].mode {
-            blob.seek(io::SeekFrom::Start(offset)).unwrap();
-            let dir_list: DirList = read_one(&mut blob).unwrap();
+            let dir_list: DirList = blob.read_dir_list(offset).unwrap();
             assert_eq!(dir_list.entries.len(), 1);
             assert_eq!(dir_list.entries[0].ino, 2);
             assert_eq!(dir_list.entries[0].name, "SekienAkashita.jpg");
@@ -430,10 +424,9 @@ mod tests {
         assert_eq!(inodes[1].uid, md.uid());
         assert_eq!(inodes[1].gid, md.gid());
         if let InodeMode::Reg { offset } = inodes[1].mode {
-            blob.seek(io::SeekFrom::Start(offset)).unwrap();
-            let chunk_list: FileChunkList = read_one(&mut blob).unwrap();
-            assert_eq!(chunk_list.chunks.len(), 1);
-            assert_eq!(chunk_list.chunks[0].len, md.len());
+            let chunks = blob.read_file_chunks(offset).unwrap();
+            assert_eq!(chunks.len(), 1);
+            assert_eq!(chunks[0].len, md.len());
         } else {
             assert!(false, "bad inode mode: {:?}", inodes[1].mode);
         }
