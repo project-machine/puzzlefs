@@ -5,6 +5,7 @@ use std::convert::TryInto;
 use std::ffi::OsString;
 use std::fs;
 use std::io;
+use std::io::{Read, Seek};
 use std::mem;
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::path::Path;
@@ -51,9 +52,24 @@ struct Blob {
 }
 */
 
+fn read_one<'a, T: Deserialize<'a>, R: Read>(r: R) -> Result<T> {
+    // serde complains when we leave extra bytes on the wire, which we often want to do. as a
+    // hack, we create a streaming deserializer for the type we're about to read, and then only
+    // read one value.
+    let mut iter = serde_cbor::Deserializer::from_reader(r).into_iter::<T>();
+    let v = iter.next().transpose()?;
+    v.ok_or(WireFormatError::ValueMissing)
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Rootfs {
     pub metadatas: Vec<BlobRef>,
+}
+
+impl Rootfs {
+    pub fn new(f: fs::File) -> Result<Rootfs> {
+        read_one(f)
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
@@ -428,4 +444,73 @@ impl InodeAdditional {
 pub struct Xattr {
     pub key: OsString,
     pub val: Option<Vec<u8>>,
+}
+
+pub struct MetadataBlob {
+    f: fs::File,
+}
+
+impl MetadataBlob {
+    pub fn new(f: fs::File) -> MetadataBlob {
+        MetadataBlob { f }
+    }
+
+    pub fn seek_ref(&mut self, r: &BlobRef) -> Result<u64> {
+        match r.kind {
+            BlobRefKind::Other { .. } => Err(WireFormatError::SeekOtherError),
+            BlobRefKind::Local => self
+                .f
+                .seek(io::SeekFrom::Start(r.offset))
+                .map_err(|e| e.into()),
+        }
+    }
+
+    pub fn read_file_chunks(&mut self, offset: u64) -> Result<Vec<FileChunk>> {
+        self.f.seek(io::SeekFrom::Start(offset))?;
+        read_one::<FileChunkList, _>(&mut self.f).map(|cl| cl.chunks)
+    }
+
+    pub fn read_dir_list(&mut self, offset: u64) -> Result<DirList> {
+        self.f.seek(io::SeekFrom::Start(offset))?;
+        read_one(&mut self.f)
+    }
+
+    pub fn find_inode(&mut self, ino: Ino) -> Result<Option<Inode>> {
+        self.f.seek(io::SeekFrom::Start(0))?;
+        // TODO: if we stick with serde and the fixed length encoding, we should not read the whole
+        // thing into memory before we binary search it...
+        let inodes = read_one::<Vec<Inode>, _>(&mut self.f)?;
+        let inode_count = inodes.len() as u64;
+        let mut left = 0;
+        let mut right = inode_count;
+
+        while left <= right {
+            let mid = left + (right - left) / 2;
+
+            self.f.seek(io::SeekFrom::Start(
+                (mid * INODE_WIRE_SIZE as u64)
+                    + cbor_size_of_list_header(inode_count as usize) as u64,
+            ))?;
+            let i = read_one::<Inode, _>(&mut self.f)?;
+            if i.ino == ino {
+                return Ok(Some(i));
+            }
+
+            if i.ino < ino {
+                left = mid + 1;
+            } else {
+                // don't underflow...
+                if mid == 0 {
+                    break;
+                }
+                right = mid - 1;
+            };
+        }
+
+        return Ok(None);
+    }
+
+    pub fn read_inodes(&mut self) -> Result<Vec<Inode>> {
+        read_one(&mut self.f)
+    }
 }
