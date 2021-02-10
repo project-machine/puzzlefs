@@ -1,7 +1,7 @@
 extern crate serde_cbor;
 extern crate xattr;
 
-use std::convert::TryInto;
+use std::convert::{TryFrom, TryInto};
 use std::ffi::OsString;
 use std::fs;
 use std::io;
@@ -23,6 +23,8 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum WireFormatError {
+    #[error("cannot turn local ref into a digest")]
+    LocalRefError,
     #[error("cannot seek to other blob")]
     SeekOtherError,
     #[error("no value present")]
@@ -79,10 +81,20 @@ pub enum BlobRefKind {
 }
 
 // TODO: should this be an ociv1 digest and include size and media type?
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub struct BlobRef {
     pub offset: u64,
     pub kind: BlobRefKind,
+}
+
+impl TryFrom<BlobRef> for [u8; 32] {
+    type Error = WireFormatError;
+    fn try_from(v: BlobRef) -> std::result::Result<Self, Self::Error> {
+        match v.kind {
+            BlobRefKind::Other { digest } => Ok(digest),
+            BlobRefKind::Local => Err(WireFormatError::LocalRefError),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]

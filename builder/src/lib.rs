@@ -374,6 +374,8 @@ pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Descriptor> {
 mod tests {
     use super::*;
 
+    use std::convert::TryInto;
+
     use tempfile::tempdir;
 
     use format::{DirList, InodeMode};
@@ -389,7 +391,7 @@ mod tests {
         //
         // but once all that's stabalized, we should verify the metadata hash too.
         let rootfs_desc = build_initial_rootfs(Path::new("./test"), &image).unwrap();
-        let rootfs = Rootfs::new(image.open_raw_blob(rootfs_desc.digest).unwrap()).unwrap();
+        let rootfs = Rootfs::new(image.open_raw_blob(&rootfs_desc.digest).unwrap()).unwrap();
 
         // there should be a blob that matches the hash of the test data, since it all gets input
         // as one chunk and there's only one file
@@ -399,7 +401,8 @@ mod tests {
         let md = fs::symlink_metadata(image.blob_path().join(FILE_DIGEST)).unwrap();
         assert!(md.is_file());
 
-        let mut blob = image.open_metadata_blob(&rootfs.metadatas[0]).unwrap();
+        let metadata_digest = rootfs.metadatas[0].try_into().unwrap();
+        let mut blob = image.open_metadata_blob(&metadata_digest).unwrap();
         let inodes = blob.read_inodes().unwrap();
 
         // we can at least deserialize inodes and they look sane
