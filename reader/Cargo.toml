@@ -1,0 +1,21 @@
+[package]
+name = "reader"
+version = "0.1.0"
+authors = ["Tycho Andersen <tycho@tycho.pizza>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+format = { path = "../format" }
+oci = { path = "../oci" }
+fuse = "*"
+thiserror = "*"
+time = "*"
+nix = "*"
+
+[dev-dependencies]
+builder = { path = "../builder" }
+tempfile = "*"
+sha2 = "*"
+hex = "*"

@@ -7,10 +7,12 @@ use std::fs;
 use std::io;
 use std::io::{Read, Seek};
 use std::mem;
+use std::os::raw::c_int;
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::path::Path;
 use std::vec::Vec;
 
+use nix::errno::Errno;
 use nix::sys::stat;
 use serde::de::Error as SerdeError;
 use serde::de::Visitor;
@@ -33,6 +35,20 @@ pub enum WireFormatError {
     IOError(#[from] io::Error),
     #[error("deserialization error")]
     CBORError(#[from] serde_cbor::Error),
+}
+
+impl WireFormatError {
+    pub fn to_errno(&self) -> c_int {
+        match self {
+            WireFormatError::LocalRefError => Errno::EINVAL as c_int,
+            WireFormatError::SeekOtherError => Errno::ESPIPE as c_int,
+            WireFormatError::ValueMissing => Errno::ENOENT as c_int,
+            WireFormatError::IOError(ioe) => {
+                ioe.raw_os_error().unwrap_or(Errno::EINVAL as i32) as c_int
+            }
+            WireFormatError::CBORError(_) => Errno::EINVAL as c_int,
+        }
+    }
 }
 
 pub type Result<T> = std::result::Result<T, WireFormatError>;
@@ -90,6 +106,16 @@ pub struct BlobRef {
 impl TryFrom<BlobRef> for [u8; 32] {
     type Error = WireFormatError;
     fn try_from(v: BlobRef) -> std::result::Result<Self, Self::Error> {
+        match v.kind {
+            BlobRefKind::Other { digest } => Ok(digest),
+            BlobRefKind::Local => Err(WireFormatError::LocalRefError),
+        }
+    }
+}
+
+impl TryFrom<&BlobRef> for [u8; 32] {
+    type Error = WireFormatError;
+    fn try_from(v: &BlobRef) -> std::result::Result<Self, Self::Error> {
         match v.kind {
             BlobRefKind::Other { digest } => Ok(digest),
             BlobRefKind::Local => Err(WireFormatError::LocalRefError),

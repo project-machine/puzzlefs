@@ -5,4 +5,5 @@ members = [
     "exe",
     "format",
     "oci",
+    "reader",
 ]
