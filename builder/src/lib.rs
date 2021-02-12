@@ -415,7 +415,7 @@ mod tests {
             assert_eq!(dir_list.entries[0].ino, 2);
             assert_eq!(dir_list.entries[0].name, "SekienAkashita.jpg");
         } else {
-            assert!(false, "bad inode mode: {:?}", inodes[0].mode);
+            panic!("bad inode mode: {:?}", inodes[0].mode);
         }
         assert_eq!(inodes[0].uid, md.uid());
         assert_eq!(inodes[0].gid, md.gid());
@@ -428,7 +428,7 @@ mod tests {
             assert_eq!(chunks.len(), 1);
             assert_eq!(chunks[0].len, md.len());
         } else {
-            assert!(false, "bad inode mode: {:?}", inodes[1].mode);
+            panic!("bad inode mode: {:?}", inodes[1].mode);
         }
     }
 }

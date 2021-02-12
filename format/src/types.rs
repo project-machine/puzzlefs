@@ -507,7 +507,7 @@ impl MetadataBlob {
             };
         }
 
-        return Ok(None);
+        Ok(None)
     }
 
     pub fn read_inodes(&mut self) -> Result<Vec<Inode>> {
