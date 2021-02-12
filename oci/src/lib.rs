@@ -1,7 +1,9 @@
 extern crate hex;
 
+use std::convert::TryFrom;
 use std::fs;
 use std::io;
+use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
@@ -62,6 +64,19 @@ impl<'a> Image<'a> {
     pub fn open_metadata_blob(&self, digest: &[u8; 32]) -> io::Result<format::MetadataBlob> {
         let f = self.open_raw_blob(&digest)?;
         Ok(MetadataBlob::new(f))
+    }
+
+    pub fn fill_from_chunk(
+        &self,
+        chunk: format::BlobRef,
+        addl_offset: u64,
+        buf: &mut [u8],
+    ) -> format::Result<usize> {
+        let digest = &<[u8; 32]>::try_from(chunk)?;
+        let mut blob = self.open_raw_blob(digest)?;
+        blob.seek(io::SeekFrom::Start(chunk.offset + addl_offset))?;
+        let n = blob.read(buf)?;
+        Ok(n)
     }
 }
 

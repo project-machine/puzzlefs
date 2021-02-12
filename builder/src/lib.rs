@@ -370,8 +370,13 @@ pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Descriptor> {
     oci.put_blob(rootfs_buf.as_slice()).map_err(|e| e.into())
 }
 
+// TODO: figure out how to guard this with #[cfg(test)]
+pub fn build_test_fs(image: &Image) -> Result<Descriptor> {
+    build_initial_rootfs(Path::new("../builder/test"), image)
+}
+
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     use std::convert::TryInto;
@@ -382,15 +387,14 @@ mod tests {
 
     #[test]
     fn test_fs_generation() {
-        let dir = tempdir().unwrap();
-        let image = Image::new(dir.path()).unwrap();
-
         // TODO: verify the hash value here since it's only one thing? problem is as we change the
         // encoding/add stuff to it, the hash will keep changing and we'll have to update the
         // test...
         //
         // but once all that's stabalized, we should verify the metadata hash too.
-        let rootfs_desc = build_initial_rootfs(Path::new("./test"), &image).unwrap();
+        let dir = tempdir().unwrap();
+        let image = Image::new(dir.path()).unwrap();
+        let rootfs_desc = build_test_fs(&image).unwrap();
         let rootfs = Rootfs::new(image.open_raw_blob(&rootfs_desc.digest).unwrap()).unwrap();
 
         // there should be a blob that matches the hash of the test data, since it all gets input
