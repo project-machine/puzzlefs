@@ -5,6 +5,7 @@ authors = ["Tycho Andersen <tycho@tycho.pizza>"]
 edition = "2018"
 
 [dependencies]
+compression = { path = "../compression" }
 format = { path = "../format" }
 oci = { path = "../oci" }
 walkdir = "2"

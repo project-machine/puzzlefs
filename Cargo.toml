@@ -6,4 +6,5 @@ members = [
     "format",
     "oci",
     "reader",
+    "compression",
 ]

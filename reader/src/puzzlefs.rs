@@ -8,6 +8,8 @@ use nix::errno::Errno;
 use format::{FileChunk, Ino, MetadataBlob};
 use oci::Image;
 
+use compression;
+
 use super::error::{FSError, FSResult};
 
 pub struct Inode {
@@ -74,13 +76,14 @@ pub struct PuzzleFS<'a> {
 
 impl<'a> PuzzleFS<'a> {
     pub fn new(oci: &'a Image, digest: &[u8; 32]) -> FSResult<PuzzleFS<'a>> {
-        let rootfs = format::Rootfs::new(oci.open_raw_blob(digest)?)?;
+        let rootfs = format::Rootfs::new(oci.open_compressed_blob::<compression::Noop>(digest)?)?;
         let layers = rootfs
             .metadatas
             .iter()
             .map(|md| -> FSResult<MetadataBlob> {
                 let digest = &<[u8; 32]>::try_from(md)?;
-                oci.open_metadata_blob(digest).map_err(|e| e.into())
+                oci.open_metadata_blob::<compression::Noop>(digest)
+                    .map_err(|e| e.into())
             })
             .collect::<FSResult<Vec<MetadataBlob>>>()?;
         Ok(PuzzleFS { layers, oci })
