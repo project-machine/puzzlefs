@@ -8,6 +8,7 @@ use std::path::Path;
 
 use walkdir::WalkDir;
 
+use compression;
 use format::{
     BlobRef, BlobRefKind, DirEnt, DirList, FileChunk, FileChunkList, Ino, Inode, InodeAdditional,
     Rootfs,
@@ -94,7 +95,7 @@ fn write_chunks_to_oci(oci: &Image, fcdc: &mut FastCDCWrapper) -> io::Result<Vec
     pending_chunks
         .iter_mut()
         .map(|c| {
-            let desc = oci.put_blob(&*c.data)?;
+            let desc = oci.put_blob::<_, compression::Noop>(&*c.data)?;
             Ok(FileChunk {
                 blob: BlobRef {
                     kind: BlobRefKind::Other {
@@ -356,7 +357,7 @@ pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Descriptor> {
     md_buf.append(&mut dir_buf);
     md_buf.append(&mut files_buf);
 
-    let desc = oci.put_blob(md_buf.as_slice())?;
+    let desc = oci.put_blob::<_, compression::Noop>(md_buf.as_slice())?;
     let metadatas = [BlobRef {
         offset: 0,
         kind: BlobRefKind::Other {
@@ -367,7 +368,8 @@ pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Descriptor> {
 
     let mut rootfs_buf = Vec::new();
     serde_cbor::to_writer(&mut rootfs_buf, &Rootfs { metadatas })?;
-    oci.put_blob(rootfs_buf.as_slice()).map_err(|e| e.into())
+    oci.put_blob::<_, compression::Noop>(rootfs_buf.as_slice())
+        .map_err(|e| e.into())
 }
 
 // TODO: figure out how to guard this with #[cfg(test)]
@@ -395,7 +397,12 @@ pub mod tests {
         let dir = tempdir().unwrap();
         let image = Image::new(dir.path()).unwrap();
         let rootfs_desc = build_test_fs(&image).unwrap();
-        let rootfs = Rootfs::new(image.open_raw_blob(&rootfs_desc.digest).unwrap()).unwrap();
+        let rootfs = Rootfs::new(
+            image
+                .open_compressed_blob::<compression::Noop>(&rootfs_desc.digest)
+                .unwrap(),
+        )
+        .unwrap();
 
         // there should be a blob that matches the hash of the test data, since it all gets input
         // as one chunk and there's only one file
@@ -406,7 +413,9 @@ pub mod tests {
         assert!(md.is_file());
 
         let metadata_digest = rootfs.metadatas[0].try_into().unwrap();
-        let mut blob = image.open_metadata_blob(&metadata_digest).unwrap();
+        let mut blob = image
+            .open_metadata_blob::<compression::Noop>(&metadata_digest)
+            .unwrap();
         let inodes = blob.read_inodes().unwrap();
 
         // we can at least deserialize inodes and they look sane

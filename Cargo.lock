@@ -36,6 +36,7 @@ dependencies = [
 name = "builder"
 version = "0.1.0"
 dependencies = [
+ "compression",
  "fastcdc",
  "format",
  "oci",
@@ -90,6 +91,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "compression"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+]
+
+[[package]]
 name = "cpuid-bool"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -114,6 +122,7 @@ checksum = "5afa29be46b12c8c380b997def8d1ac77c2665da93eb0a768fab0bf4db79333f"
 name = "format"
 version = "0.1.0"
 dependencies = [
+ "compression",
  "nix",
  "serde",
  "serde_cbor",
@@ -247,6 +256,7 @@ dependencies = [
 name = "oci"
 version = "0.1.0"
 dependencies = [
+ "compression",
  "format",
  "hex",
  "sha2",
@@ -375,6 +385,7 @@ name = "reader"
 version = "0.1.0"
 dependencies = [
  "builder",
+ "compression",
  "format",
  "fuse",
  "hex",

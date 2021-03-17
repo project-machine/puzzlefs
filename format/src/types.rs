@@ -19,6 +19,8 @@ use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
+use compression::{Compression, Decompressor};
+
 // To get off the ground here, we just use serde and cbor for most things, except for the fixed
 // size Inode which depends being a fixed size (and cbor won't generate it that way) in the later
 // format.
@@ -85,7 +87,7 @@ pub struct Rootfs {
 }
 
 impl Rootfs {
-    pub fn new(f: fs::File) -> Result<Rootfs> {
+    pub fn new<R: Read>(f: R) -> Result<Rootfs> {
         read_one(f)
     }
 }
@@ -485,12 +487,12 @@ pub struct Xattr {
 }
 
 pub struct MetadataBlob {
-    f: fs::File,
+    f: Box<dyn Decompressor>,
 }
 
 impl MetadataBlob {
-    pub fn new(f: fs::File) -> MetadataBlob {
-        MetadataBlob { f }
+    pub fn new<C: Compression>(f: fs::File) -> MetadataBlob {
+        MetadataBlob { f: Box::new(f) }
     }
 
     pub fn seek_ref(&mut self, r: &BlobRef) -> Result<u64> {

@@ -5,6 +5,7 @@ authors = ["Tycho Andersen <tycho@tycho.pizza>"]
 edition = "2018"
 
 [dependencies]
+compression = { path = "../compression" }
 serde = { version = "^1.0.27", features = [ "derive" ] }
 serde_cbor = "*"
 nix = "*"

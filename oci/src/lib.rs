@@ -10,6 +10,7 @@ use sha2::{Digest, Sha256};
 use tee::TeeReader;
 use tempfile::NamedTempFile;
 
+use compression::{Compression, Decompressor};
 use format::MetadataBlob;
 
 #[derive(Debug, Copy, Clone)]
@@ -40,12 +41,13 @@ impl<'a> Image<'a> {
         self.oci_dir.join("blobs/sha256")
     }
 
-    pub fn put_blob<R: io::Read>(&self, buf: R) -> Result<Descriptor, io::Error> {
-        let mut tmp = NamedTempFile::new_in(self.oci_dir)?;
+    pub fn put_blob<R: io::Read, C: Compression>(&self, buf: R) -> Result<Descriptor, io::Error> {
+        let tmp = NamedTempFile::new_in(self.oci_dir)?;
+        let mut compressed = C::compress(tmp.reopen()?);
         let mut hasher = Sha256::new();
 
         let mut t = TeeReader::new(buf, &mut hasher);
-        let size = io::copy(&mut t, &mut tmp)?;
+        let size = io::copy(&mut t, &mut compressed)?;
 
         let digest = hasher.finalize();
         let descriptor = Descriptor {
@@ -57,13 +59,24 @@ impl<'a> Image<'a> {
         Ok(descriptor)
     }
 
-    pub fn open_raw_blob(&self, digest: &[u8; 32]) -> io::Result<fs::File> {
+    fn open_raw_blob(&self, digest: &[u8; 32]) -> io::Result<fs::File> {
         fs::File::open(self.blob_path().join(hex::encode(digest)))
     }
 
-    pub fn open_metadata_blob(&self, digest: &[u8; 32]) -> io::Result<format::MetadataBlob> {
+    pub fn open_compressed_blob<C: Compression>(
+        &self,
+        digest: &[u8; 32],
+    ) -> io::Result<Box<dyn Decompressor>> {
         let f = self.open_raw_blob(&digest)?;
-        Ok(MetadataBlob::new(f))
+        Ok(C::decompress(f))
+    }
+
+    pub fn open_metadata_blob<C: Compression>(
+        &self,
+        digest: &[u8; 32],
+    ) -> io::Result<format::MetadataBlob> {
+        let f = self.open_raw_blob(&digest)?;
+        Ok(MetadataBlob::new::<C>(f))
     }
 
     pub fn fill_from_chunk(
@@ -89,7 +102,9 @@ mod tests {
     fn test_put_blob_correct_hash() {
         let dir = tempdir().unwrap();
         let image: Image = Image::new(dir.path()).unwrap();
-        let desc = image.put_blob("meshuggah rocks".as_bytes()).unwrap();
+        let desc = image
+            .put_blob::<_, compression::Noop>("meshuggah rocks".as_bytes())
+            .unwrap();
 
         const DIGEST: &str = "3abd5ce0f91f640d88dca1f26b37037b02415927cacec9626d87668a715ec12d";
         assert_eq!(desc.digest_as_str(), DIGEST);
