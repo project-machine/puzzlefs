@@ -16,5 +16,5 @@ jobs:
                 toolchain: stable
             - name: install dependencies
               run: |
-                sudo apt-get install libfuse-dev
+                sudo apt-get install libfuse-dev libzstd-dev libxxhash-dev
             - run: make lint check

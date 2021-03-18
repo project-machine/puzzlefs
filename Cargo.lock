@@ -95,6 +95,7 @@ name = "compression"
 version = "0.1.0"
 dependencies = [
  "tempfile",
+ "zstd-seekable",
 ]
 
 [[package]]
@@ -249,6 +250,16 @@ dependencies = [
  "bitflags",
  "cc",
  "cfg-if",
+ "libc",
+]
+
+[[package]]
+name = "num_cpus"
+version = "1.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "05499f3756671c15885fee9034446956fff3f243d6077b91e5767df161f766b3"
+dependencies = [
+ "hermit-abi",
  "libc",
 ]
 
@@ -549,6 +560,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bcbb6aa301e5d3b0b5ef639c9a9c7e2f1c944f177b460c04dc24c69b1fa2bd99"
 
 [[package]]
+name = "threadpool"
+version = "1.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d050e60b33d41c19108b32cea32164033a9013fe3b46cbd4457559bfbf77afaa"
+dependencies = [
+ "num_cpus",
+]
+
+[[package]]
 name = "time"
 version = "0.1.43"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -649,4 +669,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "244c3741f4240ef46274860397c7c74e50eb23624996930e484c16679633a54c"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "zstd-seekable"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e3b99cee88f0309ca765c6aa8c284a00394c35ef8ca012e2409485fc369bf2f"
+dependencies = [
+ "cc",
+ "libc",
+ "pkg-config",
+ "thiserror",
+ "threadpool",
 ]
