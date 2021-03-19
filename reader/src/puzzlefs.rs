@@ -8,8 +8,6 @@ use nix::errno::Errno;
 use format::{FileChunk, Ino, MetadataBlob};
 use oci::Image;
 
-use compression;
-
 use super::error::{FSError, FSResult};
 
 pub struct Inode {

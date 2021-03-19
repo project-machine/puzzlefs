@@ -40,16 +40,17 @@ mod tests {
     use super::*;
     use tempfile::NamedTempFile;
 
-    const TRUTH: &'static str = "meshuggah rocks";
+    const TRUTH: &str = "meshuggah rocks";
 
     pub fn compress_decompress_noop<C: Compression>() {
         let f = NamedTempFile::new().unwrap();
         let mut compressed = C::compress(f.reopen().unwrap());
-        compressed.write(TRUTH.as_bytes()).unwrap();
+        compressed.write_all(TRUTH.as_bytes()).unwrap();
         compressed.end().unwrap();
 
         let mut buf = vec![0_u8; TRUTH.len()];
-        C::decompress(f.reopen().unwrap()).read(&mut buf).unwrap();
+        let n = C::decompress(f.reopen().unwrap()).read(&mut buf).unwrap();
+        assert_eq!(n, TRUTH.len());
 
         assert_eq!(TRUTH.as_bytes(), buf);
     }
@@ -57,13 +58,16 @@ mod tests {
     pub fn compression_is_seekable<C: Compression>() {
         let f = NamedTempFile::new().unwrap();
         let mut compressed = C::compress(f.reopen().unwrap());
-        compressed.write(TRUTH.as_bytes()).unwrap();
+        compressed.write_all(TRUTH.as_bytes()).unwrap();
         compressed.end().unwrap();
 
-        let mut buf = vec![0_u8; 5];
+        let mut buf = vec![0_u8; 1024];
         let mut decompressor = C::decompress(f.reopen().unwrap());
-        decompressor.seek(io::SeekFrom::Start("meshuggah ".len() as u64)).unwrap();
-        decompressor.read(&mut buf).unwrap();
+        decompressor
+            .seek(io::SeekFrom::Start("meshuggah ".len() as u64))
+            .unwrap();
+        let n = decompressor.read(&mut buf).unwrap();
+        assert_eq!(n, 5);
 
         assert_eq!("rocks".as_bytes(), &buf[0..5]);
     }
@@ -83,7 +87,7 @@ mod tests {
         // shouldn't mangle the file content if in no-op mode
         let f = NamedTempFile::new().unwrap();
         Noop::compress(f.reopen().unwrap())
-            .write(TRUTH.as_bytes())
+            .write_all(TRUTH.as_bytes())
             .unwrap();
 
         let content = fs::read_to_string(f.path()).unwrap();

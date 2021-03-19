@@ -8,7 +8,6 @@ use std::path::Path;
 
 use walkdir::WalkDir;
 
-use compression;
 use format::{
     BlobRef, BlobRefKind, DirEnt, DirList, FileChunk, FileChunkList, Ino, Inode, InodeAdditional,
     Rootfs,
