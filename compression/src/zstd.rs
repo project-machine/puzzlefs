@@ -1,9 +1,10 @@
+use std::cmp::min;
 use std::convert::TryFrom;
 use std::fs;
 use std::io;
 use std::io::Write;
 
-use zstd_seekable::{SeekableCStream, Seekable};
+use zstd_seekable::{Seekable, SeekableCStream};
 
 use crate::{Compression, Compressor, Decompressor};
 
@@ -24,7 +25,7 @@ fn err_to_io<E: 'static + std::error::Error + Send + Sync>(e: E) -> io::Error {
 pub struct ZstdCompressor {
     f: fs::File,
     stream: SeekableCStream,
-    buf: Vec<u8>
+    buf: Vec<u8>,
 }
 
 impl Compressor for ZstdCompressor {
@@ -37,7 +38,10 @@ impl Compressor for ZstdCompressor {
 impl io::Write for ZstdCompressor {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         // TODO: we could try to consume all the input, but for now we just consume a single block
-        let (out_pos, in_pos) = self.stream.compress(&mut self.buf, buf).map_err(err_to_io)?;
+        let (out_pos, in_pos) = self
+            .stream
+            .compress(&mut self.buf, buf)
+            .map_err(err_to_io)?;
         self.f.write_all(&self.buf[0..out_pos])?;
         Ok(in_pos)
     }
@@ -52,34 +56,45 @@ impl io::Write for ZstdCompressor {
 pub struct ZstdDecompressor {
     stream: Seekable<'static, fs::File>,
     offset: u64,
+    uncompressed_length: u64,
 }
 
 impl Decompressor for ZstdDecompressor {}
 
 impl io::Seek for ZstdDecompressor {
     fn seek(&mut self, offset: io::SeekFrom) -> io::Result<u64> {
-        let prev = self.offset;
         match offset {
             io::SeekFrom::Start(s) => {
                 self.offset = s;
-                Ok(prev + s)
-            },
-            io::SeekFrom::End(_) => Err(io::Error::new(io::ErrorKind::Other, "zstd end seek not implemented")),
+            }
+            io::SeekFrom::End(e) => {
+                if e > 0 {
+                    return Err(io::Error::new(io::ErrorKind::Other, "zstd seek past end"));
+                }
+                self.offset = self.uncompressed_length - u64::try_from(-e).map_err(err_to_io)?;
+            }
             io::SeekFrom::Current(c) => {
                 if c > 0 {
                     self.offset += u64::try_from(c).map_err(err_to_io)?;
                 } else {
                     self.offset -= u64::try_from(-c).map_err(err_to_io)?;
                 }
-                Ok(self.offset - prev)
-            },
+            }
         }
+        Ok(self.offset)
     }
 }
 
 impl io::Read for ZstdDecompressor {
     fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
-        let size = self.stream.decompress(out, self.offset).map_err(err_to_io)?;
+        // decompress() gets angry (ZSTD("Corrupted block detected")) if you pass it a buffer
+        // longer than the uncompressable data, so let's be careful to truncate the buffer if it
+        // would make zstd angry. maybe soon they'll implement a real read() API :)
+        let end = min(out.len(), (self.uncompressed_length - self.offset) as usize);
+        let size = self
+            .stream
+            .decompress(&mut out[0..end], self.offset)
+            .map_err(err_to_io)?;
         self.offset += size as u64;
         Ok(size)
     }
@@ -92,21 +107,34 @@ impl Compression for Zstd {
         // a "pretty high" compression level, since decompression should be nearly the same no
         // matter what compression level. Maybe we should turn this to 22 or whatever the max is...
         let stream = SeekableCStream::new(17, FRAME_SIZE).unwrap();
-        Box::new(ZstdCompressor { f: dest, stream, buf: vec![0_u8; FRAME_SIZE] })
+        Box::new(ZstdCompressor {
+            f: dest,
+            stream,
+            buf: vec![0_u8; FRAME_SIZE],
+        })
     }
 
     fn decompress(source: fs::File) -> Box<dyn Decompressor> {
         let stream = Seekable::init(Box::new(source)).unwrap();
-        Box::new(ZstdDecompressor { stream, offset: 0 })
+
+        // zstd-seekable doesn't like it when we pass a buffer past the end of the uncompressed
+        // stream, so let's figure out the size of the uncompressed file so we can implement
+        // ::read() in a reasonable way. This also lets us implement SeekFrom::End.
+        let uncompressed_length = (0..stream.get_num_frames())
+            .map(|i| stream.get_frame_decompressed_size(i) as u64)
+            .sum();
+        Box::new(ZstdDecompressor {
+            stream,
+            offset: 0,
+            uncompressed_length,
+        })
     }
 }
 
-
-
 #[cfg(test)]
 mod tests {
-    use crate::tests::{compress_decompress_noop, compression_is_seekable};
     use super::*;
+    use crate::tests::{compress_decompress_noop, compression_is_seekable};
 
     #[test]
     fn test_ztsd_roundtrip() {
