@@ -13,3 +13,5 @@ tee = "*"
 tempfile = "*"
 compression = { path = "../compression" }
 format = { path = "../format" }
+serde = { version = "^1.0.27", features = [ "derive" ] }
+serde_json = "*"

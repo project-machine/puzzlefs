@@ -28,6 +28,8 @@ impl fmt::Display for Error {
     }
 }
 
+impl std::error::Error for Error {}
+
 impl From<serde_cbor::Error> for Error {
     fn from(e: serde_cbor::Error) -> Self {
         Self { msg: e.to_string() }
