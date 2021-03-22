@@ -104,7 +104,7 @@ fn write_chunks_to_oci(oci: &Image, fcdc: &mut FastCDCWrapper) -> io::Result<Vec
                     },
                     offset: 0,
                 },
-                len: desc.len,
+                len: desc.size,
             })
         })
         .collect::<io::Result<Vec<FileChunk>>>()

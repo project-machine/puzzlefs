@@ -9,16 +9,16 @@ const NAME_ANNOTATION: &str = "org.opencontainers.image.ref.name";
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Descriptor {
     pub digest: [u8; 32],
-    pub len: u64,
+    pub size: u64,
     // TODO: media_type
     pub annotations: HashMap<String, String>,
 }
 
 impl Descriptor {
-    pub fn new(digest: [u8; 32], len: u64) -> Descriptor {
+    pub fn new(digest: [u8; 32], size: u64) -> Descriptor {
         Descriptor {
             digest,
-            len,
+            size,
             annotations: HashMap::new(),
         }
     }
