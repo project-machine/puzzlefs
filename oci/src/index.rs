@@ -54,6 +54,12 @@ impl Index {
         serde_json::to_writer(index_file, &self)?;
         Ok(())
     }
+
+    pub fn find_tag(&self, tag: &str) -> Option<&Descriptor> {
+        self.manifests
+            .iter()
+            .find(|d| d.get_name().map(|n| n == tag).unwrap_or(false))
+    }
 }
 
 #[cfg(test)]

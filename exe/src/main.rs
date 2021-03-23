@@ -5,7 +5,7 @@ use std::path::Path;
 use clap::Clap;
 
 use builder::build_initial_rootfs;
-use oci::{Image, Index};
+use oci::Image;
 
 #[derive(Clap)]
 #[clap(version = "0.1.0", author = "Tycho Andersen <tycho@tycho.pizza>")]
@@ -33,12 +33,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let rootfs = Path::new(&b.rootfs);
             let oci_dir = Path::new(&b.oci_dir);
             let image = Image::new(oci_dir)?;
-            let mut desc = build_initial_rootfs(rootfs, &image)?;
-            desc.set_name(b.tag);
-            let mut index = Index::default();
-            index.manifests.push(desc);
-            image.put_index(&index)?;
-            Ok(())
+            let desc = build_initial_rootfs(rootfs, &image)?;
+            image.add_tag(b.tag, desc)
         }
     }
 }

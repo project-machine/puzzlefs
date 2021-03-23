@@ -12,7 +12,7 @@ use tee::TeeReader;
 use tempfile::NamedTempFile;
 
 use compression::{Compression, Decompressor};
-use format::MetadataBlob;
+use format::{MetadataBlob, Rootfs};
 
 mod descriptor;
 pub use descriptor::Descriptor;
@@ -101,9 +101,21 @@ impl<'a> Image<'a> {
     pub fn open_metadata_blob<C: Compression>(
         &self,
         digest: &[u8; 32],
-    ) -> io::Result<format::MetadataBlob> {
+    ) -> io::Result<MetadataBlob> {
         let f = self.open_raw_blob(&digest)?;
         Ok(MetadataBlob::new::<C>(f))
+    }
+
+    pub fn open_rootfs_blob<C: Compression>(
+        &self,
+        tag: &str,
+    ) -> Result<Rootfs, Box<dyn std::error::Error>> {
+        let index = self.get_index()?;
+        let desc = index
+            .find_tag(tag)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("no tag {}", tag)))?;
+        let rootfs = Rootfs::open(self.open_compressed_blob::<C>(&desc.digest)?)?;
+        Ok(rootfs)
     }
 
     pub fn fill_from_chunk(
@@ -125,6 +137,17 @@ impl<'a> Image<'a> {
 
     pub fn put_index(&self, i: &Index) -> Result<(), Box<dyn std::error::Error>> {
         i.write(&self.oci_dir.join(index::PATH))
+    }
+
+    pub fn add_tag(
+        &self,
+        name: String,
+        mut desc: Descriptor,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        desc.set_name(name);
+        let mut index = self.get_index().unwrap_or_default();
+        index.manifests.push(desc);
+        self.put_index(&index)
     }
 }
 

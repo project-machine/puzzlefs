@@ -469,7 +469,8 @@ mod tests {
         let dir = tempdir().unwrap();
         let image = Image::new(dir.path()).unwrap();
         let rootfs_desc = build_test_fs(&image).unwrap();
-        let mut pfs = PuzzleFS::new(&image, &rootfs_desc.digest).unwrap();
+        image.add_tag("test".to_string(), rootfs_desc).unwrap();
+        let mut pfs = PuzzleFS::open(&image, "test").unwrap();
         let fuse = Fuse::new(&mut pfs);
         let mountpoint = tempdir().unwrap();
         let session = fuse::Session::new(fuse, Path::new(mountpoint.path()), &[]).unwrap();

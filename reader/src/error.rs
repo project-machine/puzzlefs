@@ -13,6 +13,12 @@ pub enum FSError {
 
     #[error("error unpacking metadata")]
     WireFormat(#[from] WireFormatError),
+
+    // TODO: let's get rid of Box<dyn std::error::Error>, it was a lazy way to propagate errors,
+    // but erasing types is painful here, since we have to render it as EINVAL everywhere, which
+    // might look weird to FUSE users.
+    #[error("generic error")]
+    Generic(#[from] Box<dyn std::error::Error>),
 }
 
 impl FSError {
@@ -20,6 +26,7 @@ impl FSError {
         match self {
             FSError::IO(ioe) => ioe.raw_os_error().unwrap_or(Errno::EINVAL as i32) as c_int,
             FSError::WireFormat(wfe) => wfe.to_errno(),
+            FSError::Generic(_) => Errno::EINVAL as c_int,
         }
     }
 

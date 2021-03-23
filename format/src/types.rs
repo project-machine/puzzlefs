@@ -87,7 +87,7 @@ pub struct Rootfs {
 }
 
 impl Rootfs {
-    pub fn new<R: Read>(f: R) -> Result<Rootfs> {
+    pub fn open<R: Read>(f: R) -> Result<Rootfs> {
         read_one(f)
     }
 }
