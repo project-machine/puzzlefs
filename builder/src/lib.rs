@@ -12,6 +12,7 @@ use format::{
     BlobRef, BlobRefKind, DirEnt, DirList, FileChunk, FileChunkList, Ino, Inode, InodeAdditional,
     Rootfs,
 };
+use oci::media_types;
 use oci::{Descriptor, Image};
 
 mod fastcdc_fs;
@@ -96,7 +97,7 @@ fn write_chunks_to_oci(oci: &Image, fcdc: &mut FastCDCWrapper) -> io::Result<Vec
     pending_chunks
         .iter_mut()
         .map(|c| {
-            let desc = oci.put_blob::<_, compression::Noop>(&*c.data)?;
+            let desc = oci.put_blob::<_, compression::Noop, media_types::Chunk>(&*c.data)?;
             Ok(FileChunk {
                 blob: BlobRef {
                     kind: BlobRefKind::Other {
@@ -358,7 +359,7 @@ pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Descriptor> {
     md_buf.append(&mut dir_buf);
     md_buf.append(&mut files_buf);
 
-    let desc = oci.put_blob::<_, compression::Noop>(md_buf.as_slice())?;
+    let desc = oci.put_blob::<_, compression::Noop, media_types::Inodes>(md_buf.as_slice())?;
     let metadatas = [BlobRef {
         offset: 0,
         kind: BlobRefKind::Other {
@@ -369,7 +370,7 @@ pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Descriptor> {
 
     let mut rootfs_buf = Vec::new();
     serde_cbor::to_writer(&mut rootfs_buf, &Rootfs { metadatas })?;
-    oci.put_blob::<_, compression::Noop>(rootfs_buf.as_slice())
+    oci.put_blob::<_, compression::Noop, media_types::Rootfs>(rootfs_buf.as_slice())
         .map_err(|e| e.into())
 }
 

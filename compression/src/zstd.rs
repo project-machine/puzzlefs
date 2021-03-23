@@ -129,6 +129,10 @@ impl Compression for Zstd {
             uncompressed_length,
         })
     }
+
+    fn append_extension(media_type: &str) -> String {
+        format!("{}+zstd", media_type)
+    }
 }
 
 #[cfg(test)]

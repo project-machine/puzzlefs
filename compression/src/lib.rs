@@ -21,6 +21,7 @@ impl Decompressor for fs::File {}
 pub trait Compression {
     fn compress(dest: fs::File) -> Box<dyn Compressor>;
     fn decompress(source: fs::File) -> Box<dyn Decompressor>;
+    fn append_extension(media_type: &str) -> String;
 }
 
 pub struct Noop {}
@@ -32,6 +33,10 @@ impl Compression for Noop {
 
     fn decompress(source: fs::File) -> Box<dyn Decompressor> {
         Box::new(source)
+    }
+
+    fn append_extension(media_type: &str) -> String {
+        media_type.to_string()
     }
 }
 

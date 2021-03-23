@@ -20,6 +20,8 @@ pub use descriptor::Descriptor;
 mod index;
 pub use index::Index;
 
+pub mod media_types;
+
 // this is a string, probably intended to be a real version format (though the spec doesn't say
 // anything) so let's just say "puzzlefs-dev" for now since the format is in flux.
 const PUZZLEFS_IMAGE_LAYOUT_VERSION: &str = "puzzlefs-dev";
@@ -65,7 +67,10 @@ impl<'a> Image<'a> {
         self.oci_dir.join("blobs/sha256")
     }
 
-    pub fn put_blob<R: io::Read, C: Compression>(&self, buf: R) -> Result<Descriptor, io::Error> {
+    pub fn put_blob<R: io::Read, C: Compression, MT: media_types::MediaType>(
+        &self,
+        buf: R,
+    ) -> Result<Descriptor, io::Error> {
         let tmp = NamedTempFile::new_in(self.oci_dir)?;
         let mut compressed = C::compress(tmp.reopen()?);
         let mut hasher = Sha256::new();
@@ -74,7 +79,8 @@ impl<'a> Image<'a> {
         let size = io::copy(&mut t, &mut compressed)?;
 
         let digest = hasher.finalize();
-        let descriptor = Descriptor::new(digest.into(), size);
+        let media_type = C::append_extension(MT::name());
+        let descriptor = Descriptor::new(digest.into(), size, media_type);
 
         tmp.persist(self.blob_path().join(descriptor.digest_as_str()))?;
         Ok(descriptor)
@@ -132,7 +138,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let image: Image = Image::new(dir.path()).unwrap();
         let desc = image
-            .put_blob::<_, compression::Noop>("meshuggah rocks".as_bytes())
+            .put_blob::<_, compression::Noop, media_types::Chunk>("meshuggah rocks".as_bytes())
             .unwrap();
 
         const DIGEST: &str = "3abd5ce0f91f640d88dca1f26b37037b02415927cacec9626d87668a715ec12d";
@@ -154,7 +160,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let image = Image::new(dir.path()).unwrap();
         let mut desc = image
-            .put_blob::<_, compression::Noop>("meshuggah rocks".as_bytes())
+            .put_blob::<_, compression::Noop, media_types::Chunk>("meshuggah rocks".as_bytes())
             .unwrap();
         desc.set_name("foo".to_string());
         let mut index = Index::default();
