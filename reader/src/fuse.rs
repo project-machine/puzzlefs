@@ -14,7 +14,7 @@ use super::error::{FSError, FSResult};
 use super::puzzlefs::{Inode, InodeMode, PuzzleFS};
 
 pub struct Fuse<'a> {
-    pfs: &'a mut PuzzleFS<'a>,
+    pfs: PuzzleFS<'a>,
     // TODO: LRU cache inodes or something. I had problems fiddling with the borrow checker for the
     // cache, so for now we just do each lookup every time.
 }
@@ -35,7 +35,7 @@ fn mode_to_fuse_type(inode: &Inode) -> FSResult<FileType> {
 }
 
 impl<'a> Fuse<'a> {
-    pub fn new(pfs: &'a mut PuzzleFS<'a>) -> Fuse<'a> {
+    pub fn new(pfs: PuzzleFS<'a>) -> Fuse<'a> {
         Fuse { pfs }
     }
 
@@ -455,8 +455,6 @@ mod tests {
     use std::io;
     use std::path::Path;
 
-    use super::*;
-
     extern crate hex;
     use sha2::{Digest, Sha256};
     use tempfile::tempdir;
@@ -470,12 +468,8 @@ mod tests {
         let image = Image::new(dir.path()).unwrap();
         let rootfs_desc = build_test_fs(&image).unwrap();
         image.add_tag("test".to_string(), rootfs_desc).unwrap();
-        let mut pfs = PuzzleFS::open(&image, "test").unwrap();
-        let fuse = Fuse::new(&mut pfs);
         let mountpoint = tempdir().unwrap();
-        let session = fuse::Session::new(fuse, Path::new(mountpoint.path()), &[]).unwrap();
-        let _bg = unsafe { fuse::BackgroundSession::new(session) };
-
+        let _bg = crate::mount(&image, "test", Path::new(mountpoint.path())).unwrap();
         let ents = fs::read_dir(mountpoint.path())
             .unwrap()
             .collect::<io::Result<Vec<fs::DirEntry>>>()
