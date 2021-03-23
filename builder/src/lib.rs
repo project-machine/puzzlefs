@@ -399,7 +399,7 @@ pub mod tests {
         let dir = tempdir().unwrap();
         let image = Image::new(dir.path()).unwrap();
         let rootfs_desc = build_test_fs(&image).unwrap();
-        let rootfs = Rootfs::new(
+        let rootfs = Rootfs::open(
             image
                 .open_compressed_blob::<compression::Noop>(&rootfs_desc.digest)
                 .unwrap(),

@@ -73,8 +73,8 @@ pub struct PuzzleFS<'a> {
 }
 
 impl<'a> PuzzleFS<'a> {
-    pub fn new(oci: &'a Image, digest: &[u8; 32]) -> FSResult<PuzzleFS<'a>> {
-        let rootfs = format::Rootfs::new(oci.open_compressed_blob::<compression::Noop>(digest)?)?;
+    pub fn open(oci: &'a Image, tag: &str) -> FSResult<PuzzleFS<'a>> {
+        let rootfs = oci.open_rootfs_blob::<compression::Noop>(tag)?;
         let layers = rootfs
             .metadatas
             .iter()
