@@ -1,7 +1,7 @@
 extern crate time;
 
 use std::convert::TryInto;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
 use std::os::raw::c_int;
 use std::path::Path;
 
@@ -90,14 +90,9 @@ impl<'a> Fuse<'a> {
         offset: i64,
         reply: &mut fuse::ReplyDirectory,
     ) -> FSResult<()> {
-        let dir = self.pfs.find_inode(ino)?;
-        let mut entries = dir
-            .dir_entries()?
-            .iter()
-            .collect::<Vec<(&OsString, &format::Ino)>>();
-        entries.sort_by(|(a, _), (b, _)| a.cmp(b));
-
-        for (index, (name, ino_r)) in entries.into_iter().enumerate().skip(offset as usize) {
+        let inode = self.pfs.find_inode(ino)?;
+        let entries = inode.dir_entries()?;
+        for (index, (name, ino_r)) in entries.iter().enumerate().skip(offset as usize) {
             let ino = *ino_r;
             let inode = self.pfs.find_inode(ino)?;
             let kind = mode_to_fuse_type(&inode)?;

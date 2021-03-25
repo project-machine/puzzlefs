@@ -1,5 +1,4 @@
 use std::cmp::min;
-use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::ffi::{OsStr, OsString};
 
@@ -23,12 +22,13 @@ impl Inode {
                 InodeMode::File { chunks }
             }
             format::InodeMode::Dir { offset } => {
-                let mut dir_ents = layer.read_dir_list(offset)?;
-                let entries = dir_ents
+                let mut entries = layer
+                    .read_dir_list(offset)?
                     .entries
-                    .drain(..)
-                    .map(|de| (de.name, de.ino))
-                    .collect();
+                    .iter_mut()
+                    .map(|de| (de.name.clone(), de.ino))
+                    .collect::<Vec<(OsString, Ino)>>();
+                entries.sort_by(|(a, _), (b, _)| a.cmp(b));
                 InodeMode::Dir { entries }
             }
             _ => InodeMode::Other,
@@ -37,7 +37,7 @@ impl Inode {
         Ok(Inode { inode, mode })
     }
 
-    pub fn dir_entries(&self) -> FSResult<&HashMap<OsString, Ino>> {
+    pub fn dir_entries(&self) -> FSResult<&Vec<(OsString, Ino)>> {
         match &self.mode {
             InodeMode::Dir { entries } => Ok(entries),
             _ => Err(FSError::from_errno(Errno::ENOTDIR)),
@@ -47,7 +47,9 @@ impl Inode {
     pub fn dir_lookup(&self, name: &OsStr) -> FSResult<u64> {
         let entries = self.dir_entries()?;
         entries
-            .get(name)
+            .iter()
+            .find(|(cur, _)| cur == name)
+            .map(|(_, ino)| ino)
             .cloned()
             .ok_or_else(|| FSError::from_errno(Errno::ENOENT))
     }
@@ -63,7 +65,7 @@ impl Inode {
 
 pub enum InodeMode {
     File { chunks: Vec<FileChunk> },
-    Dir { entries: HashMap<OsString, Ino> },
+    Dir { entries: Vec<(OsString, Ino)> },
     Other,
 }
 
