@@ -13,6 +13,9 @@ pub use crate::fuse::Fuse;
 mod error;
 pub use error::{FSError, FSResult};
 
+mod walk;
+pub use walk::WalkPuzzleFS;
+
 pub fn mount<'a>(
     image: &'a Image,
     tag: &str,
