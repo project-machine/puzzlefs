@@ -9,6 +9,7 @@ use oci::Image;
 
 use super::error::{FSError, FSResult};
 
+#[derive(Debug)]
 pub struct Inode {
     pub inode: format::Inode,
     pub mode: InodeMode,
@@ -63,6 +64,7 @@ impl Inode {
     }
 }
 
+#[derive(Debug)]
 pub enum InodeMode {
     File { chunks: Vec<FileChunk> },
     Dir { entries: Vec<(OsString, Ino)> },
