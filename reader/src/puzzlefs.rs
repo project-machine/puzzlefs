@@ -101,14 +101,14 @@ impl<'a> PuzzleFS<'a> {
         Err(FSError::from_errno(Errno::ENOENT))
     }
 
-    pub fn file_read(&self, inode: &Inode, offset: u64, size: u32) -> FSResult<Vec<u8>> {
+    pub fn file_read(&self, inode: &Inode, offset: u64, size: u64) -> FSResult<Vec<u8>> {
         let chunks = match &inode.mode {
             InodeMode::File { chunks } => chunks,
             _ => return Err(FSError::from_errno(Errno::ENOTDIR)),
         };
 
         // TODO: fix all this casting...
-        let end = offset + u64::from(size);
+        let end = offset + size;
         let mut data = vec![0_u8; size as usize];
 
         let mut file_offset = 0;
