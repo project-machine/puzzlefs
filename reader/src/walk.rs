@@ -1,7 +1,5 @@
 use std::collections::VecDeque;
 
-use oci::Image;
-
 use super::error::FSResult;
 use super::puzzlefs::{Inode, InodeMode, PuzzleFS};
 
@@ -9,16 +7,15 @@ use super::puzzlefs::{Inode, InodeMode, PuzzleFS};
 /// stored that way in a puzzlefs image so it'll be faster reading actual content if clients want
 /// to do that.
 pub struct WalkPuzzleFS<'a> {
-    pfs: PuzzleFS<'a>,
+    pfs: &'a mut PuzzleFS<'a>,
     q: VecDeque<u64>,
 }
 
 impl<'a> WalkPuzzleFS<'a> {
-    pub fn walk(oci: &'a Image, tag: &str) -> FSResult<WalkPuzzleFS<'a>> {
-        let pfs = PuzzleFS::open(oci, tag)?;
+    pub fn walk(pfs: &'a mut PuzzleFS<'a>) -> WalkPuzzleFS<'a> {
         let mut q = VecDeque::new();
         q.push_back(1); // root inode number
-        Ok(WalkPuzzleFS { pfs, q })
+        WalkPuzzleFS { pfs, q }
     }
 
     fn handle_next(&mut self, ino: u64) -> FSResult<Inode> {
@@ -58,8 +55,9 @@ mod tests {
         let image = Image::new(oci_dir.path()).unwrap();
         let rootfs_desc = build_test_fs(&image).unwrap();
         image.add_tag("test".to_string(), rootfs_desc).unwrap();
+        let mut pfs = PuzzleFS::open(&image, "test").unwrap();
 
-        let mut walker = WalkPuzzleFS::walk(&image, "test").unwrap();
+        let mut walker = WalkPuzzleFS::walk(&mut pfs);
 
         let root = walker.next().unwrap().unwrap();
         assert_eq!(root.inode.ino, 1);
