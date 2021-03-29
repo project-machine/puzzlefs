@@ -81,7 +81,10 @@ impl<'a> Fuse<'a> {
 
     fn _read(&mut self, ino: u64, offset: u64, size: u32) -> FSResult<Vec<u8>> {
         let inode = self.pfs.find_inode(ino)?;
-        self.pfs.file_read(&inode, offset, u64::from(size))
+        let mut buf = vec![0_u8; size as usize];
+        let read = self.pfs.file_read(&inode, offset as usize, &mut buf)?;
+        buf.truncate(read);
+        Ok(buf)
     }
 
     fn _readdir(
