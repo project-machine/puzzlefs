@@ -1,6 +1,7 @@
 use std::cmp::min;
 use std::convert::TryFrom;
 use std::ffi::{OsStr, OsString};
+use std::io;
 
 use nix::errno::Errno;
 
@@ -149,5 +150,68 @@ impl<'a> PuzzleFS<'a> {
 
         // discard any extra if we hit EOF
         Ok(buf_offset as usize)
+    }
+
+    pub fn file_reader(&'a self, inode: &'a Inode) -> FSResult<FileReader<'a>> {
+        let len = inode.file_len()? as usize;
+        Ok(FileReader {
+            pfs: self,
+            inode,
+            offset: 0,
+            len,
+        })
+    }
+}
+
+pub struct FileReader<'a> {
+    pfs: &'a PuzzleFS<'a>,
+    inode: &'a Inode,
+    offset: usize,
+    len: usize,
+}
+
+impl io::Read for FileReader<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let to_read = min(self.len - self.offset, buf.len());
+        if to_read == 0 {
+            return Ok(0);
+        }
+
+        let read = self
+            .pfs
+            .file_read(self.inode, self.offset, buf)
+            .map_err(|e| io::Error::from_raw_os_error(e.to_errno()))?;
+        self.offset += read;
+        Ok(read)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tempfile::tempdir;
+    use sha2::{Digest, Sha256};
+
+    use builder::build_test_fs;
+    use oci::Image;
+
+    use super::*;
+
+    #[test]
+    fn test_file_reader() {
+        // make ourselves a test image
+        let oci_dir = tempdir().unwrap();
+        let image = Image::new(oci_dir.path()).unwrap();
+        let rootfs_desc = build_test_fs(&image).unwrap();
+        image.add_tag("test".to_string(), rootfs_desc).unwrap();
+        let mut pfs = PuzzleFS::open(&image, "test").unwrap();
+
+        let inode = pfs.find_inode(2).unwrap();
+        let mut reader = pfs.file_reader(&inode).unwrap();
+
+        let mut hasher = Sha256::new();
+
+        assert_eq!(io::copy(&mut reader, &mut hasher).unwrap(), 109466);
+        let digest = hasher.finalize();
+        assert_eq!(hex::encode(digest), "d9e749d9367fc908876749d6502eb212fee88c9a94892fb07da5ef3ba8bc39ed");
     }
 }
