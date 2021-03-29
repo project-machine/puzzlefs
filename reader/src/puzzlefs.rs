@@ -101,15 +101,14 @@ impl<'a> PuzzleFS<'a> {
         Err(FSError::from_errno(Errno::ENOENT))
     }
 
-    pub fn file_read(&self, inode: &Inode, offset: u64, size: u64) -> FSResult<Vec<u8>> {
+    pub fn file_read(&self, inode: &Inode, offset: usize, data: &mut [u8]) -> FSResult<usize> {
         let chunks = match &inode.mode {
             InodeMode::File { chunks } => chunks,
             _ => return Err(FSError::from_errno(Errno::ENOTDIR)),
         };
 
         // TODO: fix all this casting...
-        let end = offset + size;
-        let mut data = vec![0_u8; size as usize];
+        let end = offset + data.len();
 
         let mut file_offset = 0;
         let mut buf_offset = 0;
@@ -120,14 +119,14 @@ impl<'a> PuzzleFS<'a> {
             }
 
             // should we skip this chunk?
-            if file_offset + chunk.len < offset {
-                file_offset += chunk.len;
+            if file_offset + (chunk.len as usize) < offset {
+                file_offset += chunk.len as usize;
                 continue;
             }
 
             // ok, need to read this chunk; how much?
-            let left_in_buf = u64::from(size) - buf_offset;
-            let to_read: usize = min(left_in_buf, chunk.len) as usize;
+            let left_in_buf = data.len() - buf_offset;
+            let to_read = min(left_in_buf, chunk.len as usize);
 
             let start = buf_offset as usize;
             let finish = start + to_read;
@@ -139,15 +138,16 @@ impl<'a> PuzzleFS<'a> {
             file_offset += addl_offset;
 
             // how many did we actually read?
-            let n = self
-                .oci
-                .fill_from_chunk(chunk.blob, addl_offset, &mut data[start..finish])?;
-            file_offset += n as u64;
-            buf_offset += n as u64;
+            let n = self.oci.fill_from_chunk(
+                chunk.blob,
+                addl_offset as u64,
+                &mut data[start..finish],
+            )?;
+            file_offset += n;
+            buf_offset += n;
         }
 
         // discard any extra if we hit EOF
-        data.truncate(buf_offset as usize);
-        Ok(data)
+        Ok(buf_offset as usize)
     }
 }
