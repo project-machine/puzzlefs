@@ -188,8 +188,8 @@ impl io::Read for FileReader<'_> {
 
 #[cfg(test)]
 mod tests {
-    use tempfile::tempdir;
     use sha2::{Digest, Sha256};
+    use tempfile::tempdir;
 
     use builder::build_test_fs;
     use oci::Image;
@@ -212,6 +212,9 @@ mod tests {
 
         assert_eq!(io::copy(&mut reader, &mut hasher).unwrap(), 109466);
         let digest = hasher.finalize();
-        assert_eq!(hex::encode(digest), "d9e749d9367fc908876749d6502eb212fee88c9a94892fb07da5ef3ba8bc39ed");
+        assert_eq!(
+            hex::encode(digest),
+            "d9e749d9367fc908876749d6502eb212fee88c9a94892fb07da5ef3ba8bc39ed"
+        );
     }
 }
