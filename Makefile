@@ -10,7 +10,7 @@ check:
 .PHONY: lint
 lint: $(SRC)
 	rustfmt --check $(SRC)
-	cargo clippy --all-targets --all-features -- -D warnings
+	cargo clippy --all-targets --all-features -- -D warnings -A clippy::upper-case-acronyms
 
 .PHONY: fmt
 fmt:
