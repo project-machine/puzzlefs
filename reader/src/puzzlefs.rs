@@ -72,8 +72,59 @@ pub enum InodeMode {
     Other,
 }
 
+pub(crate) fn file_read(
+    oci: &Image,
+    inode: &Inode,
+    offset: usize,
+    data: &mut [u8],
+) -> FSResult<usize> {
+    let chunks = match &inode.mode {
+        InodeMode::File { chunks } => chunks,
+        _ => return Err(FSError::from_errno(Errno::ENOTDIR)),
+    };
+
+    // TODO: fix all this casting...
+    let end = offset + data.len();
+
+    let mut file_offset = 0;
+    let mut buf_offset = 0;
+    for chunk in chunks {
+        // have we read enough?
+        if file_offset > end {
+            break;
+        }
+
+        // should we skip this chunk?
+        if file_offset + (chunk.len as usize) < offset {
+            file_offset += chunk.len as usize;
+            continue;
+        }
+
+        // ok, need to read this chunk; how much?
+        let left_in_buf = data.len() - buf_offset;
+        let to_read = min(left_in_buf, chunk.len as usize);
+
+        let start = buf_offset as usize;
+        let finish = start + to_read;
+        let addl_offset = if offset > file_offset {
+            offset - file_offset
+        } else {
+            0
+        };
+        file_offset += addl_offset;
+
+        // how many did we actually read?
+        let n = oci.fill_from_chunk(chunk.blob, addl_offset as u64, &mut data[start..finish])?;
+        file_offset += n;
+        buf_offset += n;
+    }
+
+    // discard any extra if we hit EOF
+    Ok(buf_offset as usize)
+}
+
 pub struct PuzzleFS<'a> {
-    oci: &'a Image<'a>,
+    pub(crate) oci: &'a Image<'a>,
     layers: Vec<format::MetadataBlob>,
 }
 
@@ -101,73 +152,25 @@ impl<'a> PuzzleFS<'a> {
 
         Err(FSError::from_errno(Errno::ENOENT))
     }
+}
 
-    pub fn file_read(&self, inode: &Inode, offset: usize, data: &mut [u8]) -> FSResult<usize> {
-        let chunks = match &inode.mode {
-            InodeMode::File { chunks } => chunks,
-            _ => return Err(FSError::from_errno(Errno::ENOTDIR)),
-        };
+pub struct FileReader<'a> {
+    oci: &'a Image<'a>,
+    inode: &'a Inode,
+    offset: usize,
+    len: usize,
+}
 
-        // TODO: fix all this casting...
-        let end = offset + data.len();
-
-        let mut file_offset = 0;
-        let mut buf_offset = 0;
-        for chunk in chunks {
-            // have we read enough?
-            if file_offset > end {
-                break;
-            }
-
-            // should we skip this chunk?
-            if file_offset + (chunk.len as usize) < offset {
-                file_offset += chunk.len as usize;
-                continue;
-            }
-
-            // ok, need to read this chunk; how much?
-            let left_in_buf = data.len() - buf_offset;
-            let to_read = min(left_in_buf, chunk.len as usize);
-
-            let start = buf_offset as usize;
-            let finish = start + to_read;
-            let addl_offset = if offset > file_offset {
-                offset - file_offset
-            } else {
-                0
-            };
-            file_offset += addl_offset;
-
-            // how many did we actually read?
-            let n = self.oci.fill_from_chunk(
-                chunk.blob,
-                addl_offset as u64,
-                &mut data[start..finish],
-            )?;
-            file_offset += n;
-            buf_offset += n;
-        }
-
-        // discard any extra if we hit EOF
-        Ok(buf_offset as usize)
-    }
-
-    pub fn file_reader(&'a self, inode: &'a Inode) -> FSResult<FileReader<'a>> {
+impl<'a> FileReader<'a> {
+    pub fn new(oci: &'a Image<'a>, inode: &'a Inode) -> FSResult<FileReader<'a>> {
         let len = inode.file_len()? as usize;
         Ok(FileReader {
-            pfs: self,
+            oci,
             inode,
             offset: 0,
             len,
         })
     }
-}
-
-pub struct FileReader<'a> {
-    pfs: &'a PuzzleFS<'a>,
-    inode: &'a Inode,
-    offset: usize,
-    len: usize,
 }
 
 impl io::Read for FileReader<'_> {
@@ -177,9 +180,7 @@ impl io::Read for FileReader<'_> {
             return Ok(0);
         }
 
-        let read = self
-            .pfs
-            .file_read(self.inode, self.offset, buf)
+        let read = file_read(self.oci, self.inode, self.offset, buf)
             .map_err(|e| io::Error::from_raw_os_error(e.to_errno()))?;
         self.offset += read;
         Ok(read)
@@ -206,8 +207,7 @@ mod tests {
         let mut pfs = PuzzleFS::open(&image, "test").unwrap();
 
         let inode = pfs.find_inode(2).unwrap();
-        let mut reader = pfs.file_reader(&inode).unwrap();
-
+        let mut reader = FileReader::new(&image, &inode).unwrap();
         let mut hasher = Sha256::new();
 
         assert_eq!(io::copy(&mut reader, &mut hasher).unwrap(), 109466);

@@ -11,7 +11,7 @@ use nix::fcntl::OFlag;
 use time::Timespec;
 
 use super::error::{FSError, FSResult};
-use super::puzzlefs::{Inode, InodeMode, PuzzleFS};
+use super::puzzlefs::{file_read, Inode, InodeMode, PuzzleFS};
 
 pub struct Fuse<'a> {
     pfs: PuzzleFS<'a>,
@@ -82,7 +82,7 @@ impl<'a> Fuse<'a> {
     fn _read(&mut self, ino: u64, offset: u64, size: u32) -> FSResult<Vec<u8>> {
         let inode = self.pfs.find_inode(ino)?;
         let mut buf = vec![0_u8; size as usize];
-        let read = self.pfs.file_read(&inode, offset as usize, &mut buf)?;
+        let read = file_read(self.pfs.oci, &inode, offset as usize, &mut buf)?;
         buf.truncate(read);
         Ok(buf)
     }
