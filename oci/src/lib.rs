@@ -7,7 +7,7 @@ use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+use sha2::{Digest as Sha2Digest, Sha256};
 use tee::TeeReader;
 use tempfile::NamedTempFile;
 
@@ -15,7 +15,7 @@ use compression::{Compression, Decompressor};
 use format::{MetadataBlob, Rootfs};
 
 mod descriptor;
-pub use descriptor::Descriptor;
+pub use descriptor::{Descriptor, Digest};
 
 mod index;
 pub use index::Index;
@@ -82,26 +82,23 @@ impl<'a> Image<'a> {
         let media_type = C::append_extension(MT::name());
         let descriptor = Descriptor::new(digest.into(), size, media_type);
 
-        tmp.persist(self.blob_path().join(descriptor.digest_as_str()))?;
+        tmp.persist(self.blob_path().join(descriptor.digest.to_string()))?;
         Ok(descriptor)
     }
 
-    fn open_raw_blob(&self, digest: &[u8; 32]) -> io::Result<fs::File> {
-        fs::File::open(self.blob_path().join(hex::encode(digest)))
+    fn open_raw_blob(&self, digest: &Digest) -> io::Result<fs::File> {
+        fs::File::open(self.blob_path().join(digest.to_string()))
     }
 
     pub fn open_compressed_blob<C: Compression>(
         &self,
-        digest: &[u8; 32],
+        digest: &Digest,
     ) -> io::Result<Box<dyn Decompressor>> {
         let f = self.open_raw_blob(&digest)?;
         Ok(C::decompress(f))
     }
 
-    pub fn open_metadata_blob<C: Compression>(
-        &self,
-        digest: &[u8; 32],
-    ) -> io::Result<MetadataBlob> {
+    pub fn open_metadata_blob<C: Compression>(&self, digest: &Digest) -> io::Result<MetadataBlob> {
         let f = self.open_raw_blob(&digest)?;
         Ok(MetadataBlob::new::<C>(f))
     }
@@ -124,7 +121,7 @@ impl<'a> Image<'a> {
         addl_offset: u64,
         buf: &mut [u8],
     ) -> format::Result<usize> {
-        let digest = &<[u8; 32]>::try_from(chunk)?;
+        let digest = &<Digest>::try_from(chunk)?;
         let mut blob = self.open_raw_blob(digest)?;
         blob.seek(io::SeekFrom::Start(chunk.offset + addl_offset))?;
         let n = blob.read(buf)?;
@@ -165,7 +162,7 @@ mod tests {
             .unwrap();
 
         const DIGEST: &str = "3abd5ce0f91f640d88dca1f26b37037b02415927cacec9626d87668a715ec12d";
-        assert_eq!(desc.digest_as_str(), DIGEST);
+        assert_eq!(desc.digest.to_string(), DIGEST);
 
         let md = fs::symlink_metadata(image.blob_path().join(DIGEST)).unwrap();
         assert!(md.is_file());

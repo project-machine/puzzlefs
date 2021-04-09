@@ -1,7 +1,7 @@
 extern crate serde_cbor;
 extern crate xattr;
 
-use std::convert::{TryFrom, TryInto};
+use std::convert::TryInto;
 use std::ffi::OsString;
 use std::fs;
 use std::io;
@@ -103,26 +103,6 @@ pub enum BlobRefKind {
 pub struct BlobRef {
     pub offset: u64,
     pub kind: BlobRefKind,
-}
-
-impl TryFrom<BlobRef> for [u8; 32] {
-    type Error = WireFormatError;
-    fn try_from(v: BlobRef) -> std::result::Result<Self, Self::Error> {
-        match v.kind {
-            BlobRefKind::Other { digest } => Ok(digest),
-            BlobRefKind::Local => Err(WireFormatError::LocalRefError),
-        }
-    }
-}
-
-impl TryFrom<&BlobRef> for [u8; 32] {
-    type Error = WireFormatError;
-    fn try_from(v: &BlobRef) -> std::result::Result<Self, Self::Error> {
-        match v.kind {
-            BlobRefKind::Other { digest } => Ok(digest),
-            BlobRefKind::Local => Err(WireFormatError::LocalRefError),
-        }
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]

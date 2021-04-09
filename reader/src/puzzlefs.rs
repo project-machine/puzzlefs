@@ -6,7 +6,7 @@ use std::io;
 use nix::errno::Errno;
 
 use format::{FileChunk, Ino, MetadataBlob};
-use oci::Image;
+use oci::{Digest, Image};
 
 use super::error::{FSError, FSResult};
 
@@ -135,7 +135,7 @@ impl<'a> PuzzleFS<'a> {
             .metadatas
             .iter()
             .map(|md| -> FSResult<MetadataBlob> {
-                let digest = &<[u8; 32]>::try_from(md)?;
+                let digest = &<Digest>::try_from(md)?;
                 oci.open_metadata_blob::<compression::Noop>(digest)
                     .map_err(|e| e.into())
             })
