@@ -101,7 +101,7 @@ fn write_chunks_to_oci(oci: &Image, fcdc: &mut FastCDCWrapper) -> io::Result<Vec
             Ok(FileChunk {
                 blob: BlobRef {
                     kind: BlobRefKind::Other {
-                        digest: desc.digest,
+                        digest: desc.digest.underlying(),
                     },
                     offset: 0,
                 },
@@ -358,7 +358,7 @@ pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Descriptor> {
     let metadatas = [BlobRef {
         offset: 0,
         kind: BlobRefKind::Other {
-            digest: desc.digest,
+            digest: desc.digest.underlying(),
         },
     }]
     .to_vec();
