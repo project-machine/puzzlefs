@@ -284,16 +284,10 @@ pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Descriptor> {
     // TODO: not render this whole thing in memory, stick it all in the same blob, etc.
     let mut dir_buf = Vec::<u8>::new();
 
-    // need the dirs in inode order
-    let mut ordered_dirs = {
-        let mut v = dirs.values().collect::<Vec<_>>();
-        v.sort_by(|a, b| a.ino.cmp(&b.ino));
-        v
-    };
-
     // render dirs
     pfs_inodes.extend(
-        ordered_dirs
+        dirs.values_mut()
+            .collect::<Vec<_>>()
             .drain(..)
             .map(|d| {
                 let dir_list_offset = inodes_serial_size + dir_buf.len();
@@ -350,6 +344,7 @@ pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Descriptor> {
             })
             .collect::<Result<Vec<Inode>>>()?,
     );
+    pfs_inodes.sort_by(|a, b| a.ino.cmp(&b.ino));
 
     let mut md_buf = Vec::<u8>::with_capacity(inodes_serial_size + dir_buf.len() + files_buf.len());
     serde_cbor::to_writer(&mut md_buf, &pfs_inodes)?;
