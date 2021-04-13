@@ -10,7 +10,8 @@ use nix::errno::Errno;
 use nix::fcntl::OFlag;
 use time::Timespec;
 
-use super::error::{FSError, FSResult};
+use format::{Result, WireFormatError};
+
 use super::puzzlefs::{file_read, Inode, InodeMode, PuzzleFS};
 
 pub struct Fuse<'a> {
@@ -19,7 +20,7 @@ pub struct Fuse<'a> {
     // cache, so for now we just do each lookup every time.
 }
 
-fn mode_to_fuse_type(inode: &Inode) -> FSResult<FileType> {
+fn mode_to_fuse_type(inode: &Inode) -> Result<FileType> {
     Ok(match inode.mode {
         InodeMode::File { .. } => FileType::RegularFile,
         InodeMode::Dir { .. } => FileType::Directory,
@@ -29,7 +30,7 @@ fn mode_to_fuse_type(inode: &Inode) -> FSResult<FileType> {
             format::InodeMode::Blk { .. } => FileType::BlockDevice,
             format::InodeMode::Lnk => FileType::Symlink,
             format::InodeMode::Sock => FileType::Socket,
-            _ => return Err(FSError::from_errno(Errno::EINVAL)),
+            _ => return Err(WireFormatError::from_errno(Errno::EINVAL)),
         },
     })
 }
@@ -39,13 +40,13 @@ impl<'a> Fuse<'a> {
         Fuse { pfs }
     }
 
-    fn _lookup(&mut self, parent: u64, name: &OsStr) -> FSResult<FileAttr> {
+    fn _lookup(&mut self, parent: u64, name: &OsStr) -> Result<FileAttr> {
         let dir = self.pfs.find_inode(parent)?;
         let ino = dir.dir_lookup(name)?;
         self._getattr(ino)
     }
 
-    fn _getattr(&mut self, ino: u64) -> FSResult<FileAttr> {
+    fn _getattr(&mut self, ino: u64) -> Result<FileAttr> {
         let ic = self.pfs.find_inode(ino)?;
         let kind = mode_to_fuse_type(&ic)?;
         let len = ic.file_len().unwrap_or(0);
@@ -79,7 +80,7 @@ impl<'a> Fuse<'a> {
         }
     }
 
-    fn _read(&mut self, ino: u64, offset: u64, size: u32) -> FSResult<Vec<u8>> {
+    fn _read(&mut self, ino: u64, offset: u64, size: u32) -> Result<Vec<u8>> {
         let inode = self.pfs.find_inode(ino)?;
         let mut buf = vec![0_u8; size as usize];
         let read = file_read(self.pfs.oci, &inode, offset as usize, &mut buf)?;
@@ -87,12 +88,7 @@ impl<'a> Fuse<'a> {
         Ok(buf)
     }
 
-    fn _readdir(
-        &mut self,
-        ino: u64,
-        offset: i64,
-        reply: &mut fuse::ReplyDirectory,
-    ) -> FSResult<()> {
+    fn _readdir(&mut self, ino: u64, offset: i64, reply: &mut fuse::ReplyDirectory) -> Result<()> {
         let inode = self.pfs.find_inode(ino)?;
         let entries = inode.dir_entries()?;
         for (index, (name, ino_r)) in entries.iter().enumerate().skip(offset as usize) {
@@ -111,7 +107,7 @@ impl<'a> Fuse<'a> {
 }
 
 impl Filesystem for Fuse<'_> {
-    fn init(&mut self, _req: &Request) -> Result<(), c_int> {
+    fn init(&mut self, _req: &Request) -> std::result::Result<(), c_int> {
         Ok(())
     }
 

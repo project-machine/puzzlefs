@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::fs;
-use std::io;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -8,6 +7,7 @@ use serde::{Deserialize, Serialize};
 extern crate serde_json;
 
 use crate::descriptor::Descriptor;
+use format::{Result, WireFormatError};
 
 // the OCI spec says this must be 2 in order for older dockers to use image layouts, and that it
 // will probably be removed. We could hard code it to two, but let's use -1 as an additional
@@ -36,20 +36,17 @@ impl Default for Index {
 }
 
 impl Index {
-    pub(crate) fn open(p: &Path) -> Result<Index, Box<dyn std::error::Error>> {
+    pub(crate) fn open(p: &Path) -> Result<Index> {
         let index_file = fs::File::open(p)?;
         let index = serde_json::from_reader::<_, Index>(index_file)?;
         if index.version != PUZZLEFS_SCHEMA_VERSION {
-            Err(Box::new(io::Error::new(
-                io::ErrorKind::Other,
-                format!("bad schema version {}", index.version),
-            )))
+            Err(WireFormatError::InvalidImageSchema(index.version))
         } else {
             Ok(index)
         }
     }
 
-    pub(crate) fn write(&self, p: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    pub(crate) fn write(&self, p: &Path) -> Result<()> {
         let index_file = fs::File::create(p)?;
         serde_json::to_writer(index_file, &self)?;
         Ok(())

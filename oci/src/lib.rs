@@ -12,7 +12,7 @@ use tee::TeeReader;
 use tempfile::NamedTempFile;
 
 use compression::{Compression, Decompressor};
-use format::{MetadataBlob, Rootfs};
+use format::{MetadataBlob, Result, Rootfs, WireFormatError};
 
 mod descriptor;
 pub use descriptor::{Descriptor, Digest};
@@ -39,7 +39,7 @@ pub struct Image<'a> {
 }
 
 impl<'a> Image<'a> {
-    pub fn new(oci_dir: &'a Path) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(oci_dir: &'a Path) -> Result<Self> {
         let image = Image { oci_dir };
         fs::create_dir_all(image.blob_path())?;
         let layout_file = fs::File::create(oci_dir.join(IMAGE_LAYOUT_PATH))?;
@@ -50,14 +50,11 @@ impl<'a> Image<'a> {
         Ok(Image { oci_dir })
     }
 
-    pub fn open(oci_dir: &'a Path) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn open(oci_dir: &'a Path) -> Result<Self> {
         let layout_file = fs::File::open(oci_dir.join(IMAGE_LAYOUT_PATH))?;
         let layout = serde_json::from_reader::<_, OCILayout>(layout_file)?;
         if layout.version != PUZZLEFS_IMAGE_LAYOUT_VERSION {
-            Err(Box::new(io::Error::new(
-                io::ErrorKind::Other,
-                format!("bad image layout version {}", layout.version),
-            )))
+            Err(WireFormatError::InvalidImageVersion(layout.version))
         } else {
             Ok(Image { oci_dir })
         }
@@ -70,7 +67,7 @@ impl<'a> Image<'a> {
     pub fn put_blob<R: io::Read, C: Compression, MT: media_types::MediaType>(
         &self,
         buf: R,
-    ) -> Result<Descriptor, io::Error> {
+    ) -> Result<Descriptor> {
         let tmp = NamedTempFile::new_in(self.oci_dir)?;
         let mut compressed = C::compress(tmp.reopen()?);
         let mut hasher = Sha256::new();
@@ -82,7 +79,8 @@ impl<'a> Image<'a> {
         let media_type = C::append_extension(MT::name());
         let descriptor = Descriptor::new(digest.into(), size, media_type);
 
-        tmp.persist(self.blob_path().join(descriptor.digest.to_string()))?;
+        tmp.persist(self.blob_path().join(descriptor.digest.to_string()))
+            .map_err(|e| e.error)?;
         Ok(descriptor)
     }
 
@@ -103,10 +101,7 @@ impl<'a> Image<'a> {
         Ok(MetadataBlob::new::<C>(f))
     }
 
-    pub fn open_rootfs_blob<C: Compression>(
-        &self,
-        tag: &str,
-    ) -> Result<Rootfs, Box<dyn std::error::Error>> {
+    pub fn open_rootfs_blob<C: Compression>(&self, tag: &str) -> Result<Rootfs> {
         let index = self.get_index()?;
         let desc = index
             .find_tag(tag)
@@ -128,19 +123,15 @@ impl<'a> Image<'a> {
         Ok(n)
     }
 
-    pub fn get_index(&self) -> Result<Index, Box<dyn std::error::Error>> {
+    pub fn get_index(&self) -> Result<Index> {
         Index::open(&self.oci_dir.join(index::PATH))
     }
 
-    pub fn put_index(&self, i: &Index) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn put_index(&self, i: &Index) -> Result<()> {
         i.write(&self.oci_dir.join(index::PATH))
     }
 
-    pub fn add_tag(
-        &self,
-        name: String,
-        mut desc: Descriptor,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn add_tag(&self, name: String, mut desc: Descriptor) -> Result<()> {
         desc.set_name(name);
         let mut index = self.get_index().unwrap_or_default();
         index.manifests.push(desc);

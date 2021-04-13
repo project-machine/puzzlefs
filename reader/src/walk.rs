@@ -1,9 +1,9 @@
 use std::collections::VecDeque;
 use std::path::PathBuf;
 
+use format::Result;
 use oci::Image;
 
-use super::error::FSResult;
 use super::puzzlefs::{FileReader, Inode, InodeMode, PuzzleFS};
 
 /// A in iterator over a PuzzleFS filesystem. This iterates breadth first, since file content is
@@ -15,7 +15,7 @@ pub struct WalkPuzzleFS<'a> {
 }
 
 impl<'a> WalkPuzzleFS<'a> {
-    pub fn walk(pfs: &'a mut PuzzleFS<'a>) -> FSResult<WalkPuzzleFS<'a>> {
+    pub fn walk(pfs: &'a mut PuzzleFS<'a>) -> Result<WalkPuzzleFS<'a>> {
         let mut q = VecDeque::new();
 
         let inode = pfs.find_inode(1)?; // root inode number
@@ -28,7 +28,7 @@ impl<'a> WalkPuzzleFS<'a> {
         Ok(WalkPuzzleFS { pfs, q })
     }
 
-    fn add_dir_entries(&mut self, dir: &DirEntry) -> FSResult<()> {
+    fn add_dir_entries(&mut self, dir: &DirEntry) -> Result<()> {
         if let InodeMode::Dir { ref entries } = dir.inode.mode {
             for (name, ino) in entries {
                 let inode = self.pfs.find_inode(*ino)?;
@@ -46,7 +46,7 @@ impl<'a> WalkPuzzleFS<'a> {
 }
 
 impl<'a> Iterator for WalkPuzzleFS<'a> {
-    type Item = FSResult<DirEntry<'a>>;
+    type Item = Result<DirEntry<'a>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let de = self.q.pop_front()?;
@@ -62,7 +62,7 @@ pub struct DirEntry<'a> {
 
 impl<'a> DirEntry<'a> {
     /// Opens this DirEntry if it is a file.
-    pub fn open(&'a self) -> FSResult<FileReader<'a>> {
+    pub fn open(&'a self) -> Result<FileReader<'a>> {
         FileReader::new(&self.oci, &self.inode)
     }
 }

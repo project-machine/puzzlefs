@@ -127,6 +127,7 @@ dependencies = [
  "nix",
  "serde",
  "serde_cbor",
+ "serde_json",
  "thiserror",
  "xattr",
 ]
@@ -414,7 +415,6 @@ dependencies = [
  "oci",
  "sha2",
  "tempfile",
- "thiserror",
  "time",
 ]
 

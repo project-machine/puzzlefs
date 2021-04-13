@@ -11,7 +11,6 @@ compression = { path = "../compression" }
 format = { path = "../format" }
 oci = { path = "../oci" }
 fuse = "*"
-thiserror = "*"
 time = "*"
 nix = "*"
 
