@@ -5,6 +5,7 @@ authors = ["Tycho Andersen <tycho@tycho.pizza>"]
 edition = "2018"
 
 [dependencies]
+anyhow = "*"
 clap = "3.0.0-beta.2"
 format = { path = "../format" }
 builder = { path = "../builder" }
