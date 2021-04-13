@@ -5,10 +5,8 @@ use std::io;
 
 use nix::errno::Errno;
 
-use format::{FileChunk, Ino, MetadataBlob};
+use format::{FileChunk, Ino, MetadataBlob, Result, WireFormatError};
 use oci::{Digest, Image};
-
-use super::error::{FSError, FSResult};
 
 #[derive(Debug)]
 pub struct Inode {
@@ -17,7 +15,7 @@ pub struct Inode {
 }
 
 impl Inode {
-    fn new(layer: &mut MetadataBlob, inode: format::Inode) -> FSResult<Inode> {
+    fn new(layer: &mut MetadataBlob, inode: format::Inode) -> Result<Inode> {
         let mode = match inode.mode {
             format::InodeMode::Reg { offset } => {
                 let chunks = layer.read_file_chunks(offset)?;
@@ -39,27 +37,27 @@ impl Inode {
         Ok(Inode { inode, mode })
     }
 
-    pub fn dir_entries(&self) -> FSResult<&Vec<(OsString, Ino)>> {
+    pub fn dir_entries(&self) -> Result<&Vec<(OsString, Ino)>> {
         match &self.mode {
             InodeMode::Dir { entries } => Ok(entries),
-            _ => Err(FSError::from_errno(Errno::ENOTDIR)),
+            _ => Err(WireFormatError::from_errno(Errno::ENOTDIR)),
         }
     }
 
-    pub fn dir_lookup(&self, name: &OsStr) -> FSResult<u64> {
+    pub fn dir_lookup(&self, name: &OsStr) -> Result<u64> {
         let entries = self.dir_entries()?;
         entries
             .iter()
             .find(|(cur, _)| cur == name)
             .map(|(_, ino)| ino)
             .cloned()
-            .ok_or_else(|| FSError::from_errno(Errno::ENOENT))
+            .ok_or_else(|| WireFormatError::from_errno(Errno::ENOENT))
     }
 
-    pub fn file_len(&self) -> FSResult<u64> {
+    pub fn file_len(&self) -> Result<u64> {
         let chunks = match &self.mode {
             InodeMode::File { chunks } => chunks,
-            _ => return Err(FSError::from_errno(Errno::ENOTDIR)),
+            _ => return Err(WireFormatError::from_errno(Errno::ENOTDIR)),
         };
         Ok(chunks.iter().map(|c| c.len).sum())
     }
@@ -77,10 +75,10 @@ pub(crate) fn file_read(
     inode: &Inode,
     offset: usize,
     data: &mut [u8],
-) -> FSResult<usize> {
+) -> Result<usize> {
     let chunks = match &inode.mode {
         InodeMode::File { chunks } => chunks,
-        _ => return Err(FSError::from_errno(Errno::ENOTDIR)),
+        _ => return Err(WireFormatError::from_errno(Errno::ENOTDIR)),
     };
 
     // TODO: fix all this casting...
@@ -129,28 +127,28 @@ pub struct PuzzleFS<'a> {
 }
 
 impl<'a> PuzzleFS<'a> {
-    pub fn open(oci: &'a Image, tag: &str) -> FSResult<PuzzleFS<'a>> {
+    pub fn open(oci: &'a Image, tag: &str) -> format::Result<PuzzleFS<'a>> {
         let rootfs = oci.open_rootfs_blob::<compression::Noop>(tag)?;
         let layers = rootfs
             .metadatas
             .iter()
-            .map(|md| -> FSResult<MetadataBlob> {
+            .map(|md| -> Result<MetadataBlob> {
                 let digest = &<Digest>::try_from(md)?;
                 oci.open_metadata_blob::<compression::Noop>(digest)
                     .map_err(|e| e.into())
             })
-            .collect::<FSResult<Vec<MetadataBlob>>>()?;
+            .collect::<format::Result<Vec<MetadataBlob>>>()?;
         Ok(PuzzleFS { layers, oci })
     }
 
-    pub fn find_inode(&mut self, ino: u64) -> FSResult<Inode> {
+    pub fn find_inode(&mut self, ino: u64) -> Result<Inode> {
         for mut layer in self.layers.iter_mut() {
             if let Some(inode) = layer.find_inode(ino)? {
                 return Inode::new(&mut layer, inode);
             }
         }
 
-        Err(FSError::from_errno(Errno::ENOENT))
+        Err(format::WireFormatError::from_errno(Errno::ENOENT))
     }
 }
 
@@ -162,7 +160,7 @@ pub struct FileReader<'a> {
 }
 
 impl<'a> FileReader<'a> {
-    pub fn new(oci: &'a Image<'a>, inode: &'a Inode) -> FSResult<FileReader<'a>> {
+    pub fn new(oci: &'a Image<'a>, inode: &'a Inode) -> Result<FileReader<'a>> {
         let len = inode.file_len()? as usize;
         Ok(FileReader {
             oci,

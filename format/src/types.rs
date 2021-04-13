@@ -1,4 +1,5 @@
 extern crate serde_cbor;
+extern crate serde_json;
 extern crate xattr;
 
 use std::convert::TryInto;
@@ -33,10 +34,16 @@ pub enum WireFormatError {
     SeekOtherError,
     #[error("no value present")]
     ValueMissing,
+    #[error("invalid image schema")]
+    InvalidImageSchema(i32),
+    #[error("invalid image version")]
+    InvalidImageVersion(String),
     #[error("fs error")]
     IOError(#[from] io::Error),
-    #[error("deserialization error")]
+    #[error("deserialization error (cbor)")]
     CBORError(#[from] serde_cbor::Error),
+    #[error("deserialization error (json)")]
+    JSONError(#[from] serde_json::Error),
 }
 
 impl WireFormatError {
@@ -45,11 +52,18 @@ impl WireFormatError {
             WireFormatError::LocalRefError => Errno::EINVAL as c_int,
             WireFormatError::SeekOtherError => Errno::ESPIPE as c_int,
             WireFormatError::ValueMissing => Errno::ENOENT as c_int,
+            WireFormatError::InvalidImageSchema(_) => Errno::EINVAL as c_int,
+            WireFormatError::InvalidImageVersion(_) => Errno::EINVAL as c_int,
             WireFormatError::IOError(ioe) => {
                 ioe.raw_os_error().unwrap_or(Errno::EINVAL as i32) as c_int
             }
             WireFormatError::CBORError(_) => Errno::EINVAL as c_int,
+            WireFormatError::JSONError(_) => Errno::EINVAL as c_int,
         }
+    }
+
+    pub fn from_errno(errno: Errno) -> Self {
+        Self::IOError(io::Error::from_raw_os_error(errno as i32))
     }
 }
 

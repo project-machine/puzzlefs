@@ -1,6 +1,5 @@
 use std::cmp::min;
 use std::collections::HashMap;
-use std::fmt;
 use std::fs;
 use std::io;
 use std::os::unix::fs::MetadataExt;
@@ -10,46 +9,13 @@ use walkdir::WalkDir;
 
 use format::{
     BlobRef, BlobRefKind, DirEnt, DirList, FileChunk, FileChunkList, Ino, Inode, InodeAdditional,
-    Rootfs,
+    Result, Rootfs,
 };
 use oci::media_types;
 use oci::{Descriptor, Image};
 
 mod fastcdc_fs;
 use fastcdc_fs::{ChunkWithData, FastCDCWrapper};
-
-#[derive(Debug)]
-pub struct Error {
-    msg: String,
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str(&self.msg)
-    }
-}
-
-impl std::error::Error for Error {}
-
-impl From<serde_cbor::Error> for Error {
-    fn from(e: serde_cbor::Error) -> Self {
-        Self { msg: e.to_string() }
-    }
-}
-
-impl From<io::Error> for Error {
-    fn from(e: io::Error) -> Self {
-        Self { msg: e.to_string() }
-    }
-}
-
-impl From<walkdir::Error> for Error {
-    fn from(e: walkdir::Error) -> Self {
-        Self { msg: e.to_string() }
-    }
-}
-
-pub type Result<T> = std::result::Result<T, Error>;
 
 fn walker(rootfs: &Path) -> WalkDir {
     // breadth first search for sharing, don't cross filesystems just to be safe, order by file
@@ -91,7 +57,7 @@ struct File {
     additional: Option<InodeAdditional>,
 }
 
-fn write_chunks_to_oci(oci: &Image, fcdc: &mut FastCDCWrapper) -> io::Result<Vec<FileChunk>> {
+fn write_chunks_to_oci(oci: &Image, fcdc: &mut FastCDCWrapper) -> Result<Vec<FileChunk>> {
     let mut pending_chunks = Vec::<ChunkWithData>::new();
     fcdc.get_pending_chunks(&mut pending_chunks);
     pending_chunks
@@ -108,7 +74,7 @@ fn write_chunks_to_oci(oci: &Image, fcdc: &mut FastCDCWrapper) -> io::Result<Vec
                 len: desc.size,
             })
         })
-        .collect::<io::Result<Vec<FileChunk>>>()
+        .collect::<Result<Vec<FileChunk>>>()
 }
 
 fn take_first_chunk<FileChunk>(v: &mut Vec<FileChunk>) -> io::Result<FileChunk> {
@@ -179,8 +145,8 @@ pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Descriptor> {
     let mut prev_files = Vec::<File>::new();
 
     for entry in walker(rootfs) {
-        let e = entry?;
-        let md = e.metadata()?;
+        let e = entry.map_err(io::Error::from)?;
+        let md = e.metadata().map_err(io::Error::from)?;
 
         // now that we know the ino of this thing, let's put it in the parent directory (assuming
         // this is not "/" for our image, aka inode #1)
@@ -291,13 +257,13 @@ pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Descriptor> {
             .drain(..)
             .map(|d| {
                 let dir_list_offset = inodes_serial_size + dir_buf.len();
-                serde_cbor::to_writer(&mut dir_buf, &d.dir_list).map_err(Error::from)?;
+                serde_cbor::to_writer(&mut dir_buf, &d.dir_list)?;
                 let additional_ref = d
                     .additional
                     .as_ref()
                     .map::<Result<BlobRef>, _>(|add| {
                         let offset = inodes_serial_size + dir_buf.len();
-                        serde_cbor::to_writer(&mut dir_buf, &add).map_err(Error::from)?;
+                        serde_cbor::to_writer(&mut dir_buf, &add)?;
                         Ok(BlobRef {
                             offset: offset as u64,
                             kind: BlobRefKind::Local,
@@ -322,13 +288,13 @@ pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Descriptor> {
             .drain(..)
             .map(|f| {
                 let chunk_offset = inodes_serial_size + dir_buf.len() + files_buf.len();
-                serde_cbor::to_writer(&mut files_buf, &f.chunk_list).map_err(Error::from)?;
+                serde_cbor::to_writer(&mut files_buf, &f.chunk_list)?;
                 let additional_ref = f
                     .additional
                     .as_ref()
                     .map::<Result<BlobRef>, _>(|add| {
                         let offset = inodes_serial_size + dir_buf.len() + files_buf.len();
-                        serde_cbor::to_writer(&mut files_buf, &add).map_err(Error::from)?;
+                        serde_cbor::to_writer(&mut files_buf, &add)?;
                         Ok(BlobRef {
                             offset: offset as u64,
                             kind: BlobRefKind::Local,
@@ -366,7 +332,6 @@ pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Descriptor> {
     let mut rootfs_buf = Vec::new();
     serde_cbor::to_writer(&mut rootfs_buf, &Rootfs { metadatas })?;
     oci.put_blob::<_, compression::Noop, media_types::Rootfs>(rootfs_buf.as_slice())
-        .map_err(|e| e.into())
 }
 
 // TODO: figure out how to guard this with #[cfg(test)]

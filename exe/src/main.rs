@@ -10,8 +10,9 @@ use signal_hook::iterator::exfiltrator::SignalOnly;
 use signal_hook::iterator::SignalsInfo;
 
 use builder::build_initial_rootfs;
+use format::Result;
 use oci::Image;
-use reader::{mount, FSResult, InodeMode, PuzzleFS, WalkPuzzleFS};
+use reader::{mount, InodeMode, PuzzleFS, WalkPuzzleFS};
 
 #[derive(Clap)]
 #[clap(version = "0.1.0", author = "Tycho Andersen <tycho@tycho.pizza>")]
@@ -48,7 +49,7 @@ struct Extract {
     extract_dir: String,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<()> {
     let opts: Opts = Opts::parse();
     match opts.subcmd {
         SubCommand::Build(b) => {
@@ -78,7 +79,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             fs::create_dir(dir)?;
             let mut pfs = PuzzleFS::open(&image, &e.tag)?;
             let mut walker = WalkPuzzleFS::walk(&mut pfs)?;
-            walker.try_for_each(|de| -> FSResult<()> {
+            walker.try_for_each(|de| -> Result<()> {
                 let dir_entry = de?;
                 let path = dir.join(&dir_entry.path);
                 match dir_entry.inode.mode {
