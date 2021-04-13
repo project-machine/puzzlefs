@@ -178,7 +178,7 @@ impl io::Read for FileReader<'_> {
             return Ok(0);
         }
 
-        let read = file_read(self.oci, self.inode, self.offset, buf)
+        let read = file_read(self.oci, self.inode, self.offset, &mut buf[0..to_read])
             .map_err(|e| io::Error::from_raw_os_error(e.to_errno()))?;
         self.offset += read;
         Ok(read)
