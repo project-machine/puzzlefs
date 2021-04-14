@@ -1,4 +1,4 @@
-# PuzzleFS
+# PuzzleFS [![Build Status](https://github.com/anuvu/puzzlefs/workflows/ci/badge.svg?branch=master)](https://github.com/anuvu/puzzlefs/actions)
 
 PuzzleFS is a next-generation container filesystem.
 
