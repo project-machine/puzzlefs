@@ -1,5 +1,8 @@
+#![feature(backtrace)]
+
 extern crate hex;
 
+use std::backtrace::Backtrace;
 use std::convert::TryFrom;
 use std::fs;
 use std::io;
@@ -54,7 +57,10 @@ impl<'a> Image<'a> {
         let layout_file = fs::File::open(oci_dir.join(IMAGE_LAYOUT_PATH))?;
         let layout = serde_json::from_reader::<_, OCILayout>(layout_file)?;
         if layout.version != PUZZLEFS_IMAGE_LAYOUT_VERSION {
-            Err(WireFormatError::InvalidImageVersion(layout.version))
+            Err(WireFormatError::InvalidImageVersion(
+                layout.version,
+                Backtrace::capture(),
+            ))
         } else {
             Ok(Image { oci_dir })
         }

@@ -1,3 +1,4 @@
+use std::backtrace::Backtrace;
 use std::collections::HashMap;
 use std::convert::{TryFrom, TryInto};
 use std::fmt;
@@ -45,7 +46,7 @@ impl TryFrom<BlobRef> for Digest {
     fn try_from(v: BlobRef) -> std::result::Result<Self, Self::Error> {
         match v.kind {
             BlobRefKind::Other { digest } => Ok(Digest(digest)),
-            BlobRefKind::Local => Err(WireFormatError::LocalRefError),
+            BlobRefKind::Local => Err(WireFormatError::LocalRefError(Backtrace::capture())),
         }
     }
 }
@@ -55,7 +56,7 @@ impl TryFrom<&BlobRef> for Digest {
     fn try_from(v: &BlobRef) -> std::result::Result<Self, Self::Error> {
         match v.kind {
             BlobRefKind::Other { digest } => Ok(Digest(digest)),
-            BlobRefKind::Local => Err(WireFormatError::LocalRefError),
+            BlobRefKind::Local => Err(WireFormatError::LocalRefError(Backtrace::capture())),
         }
     }
 }

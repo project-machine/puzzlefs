@@ -1,73 +1,29 @@
 extern crate serde_cbor;
-extern crate serde_json;
 extern crate xattr;
 
+use std::backtrace::Backtrace;
 use std::convert::TryInto;
 use std::ffi::OsString;
 use std::fs;
 use std::io;
 use std::io::{Read, Seek};
 use std::mem;
-use std::os::raw::c_int;
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::path::Path;
 use std::vec::Vec;
 
-use nix::errno::Errno;
 use nix::sys::stat;
 use serde::de::Error as SerdeError;
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use thiserror::Error;
 
 use compression::{Compression, Decompressor};
+
+use crate::error::{Result, WireFormatError};
 
 // To get off the ground here, we just use serde and cbor for most things, except for the fixed
 // size Inode which depends being a fixed size (and cbor won't generate it that way) in the later
 // format.
-
-#[derive(Error, Debug)]
-pub enum WireFormatError {
-    #[error("cannot turn local ref into a digest")]
-    LocalRefError,
-    #[error("cannot seek to other blob")]
-    SeekOtherError,
-    #[error("no value present")]
-    ValueMissing,
-    #[error("invalid image schema")]
-    InvalidImageSchema(i32),
-    #[error("invalid image version")]
-    InvalidImageVersion(String),
-    #[error("fs error")]
-    IOError(#[from] io::Error),
-    #[error("deserialization error (cbor)")]
-    CBORError(#[from] serde_cbor::Error),
-    #[error("deserialization error (json)")]
-    JSONError(#[from] serde_json::Error),
-}
-
-impl WireFormatError {
-    pub fn to_errno(&self) -> c_int {
-        match self {
-            WireFormatError::LocalRefError => Errno::EINVAL as c_int,
-            WireFormatError::SeekOtherError => Errno::ESPIPE as c_int,
-            WireFormatError::ValueMissing => Errno::ENOENT as c_int,
-            WireFormatError::InvalidImageSchema(_) => Errno::EINVAL as c_int,
-            WireFormatError::InvalidImageVersion(_) => Errno::EINVAL as c_int,
-            WireFormatError::IOError(ioe) => {
-                ioe.raw_os_error().unwrap_or(Errno::EINVAL as i32) as c_int
-            }
-            WireFormatError::CBORError(_) => Errno::EINVAL as c_int,
-            WireFormatError::JSONError(_) => Errno::EINVAL as c_int,
-        }
-    }
-
-    pub fn from_errno(errno: Errno) -> Self {
-        Self::IOError(io::Error::from_raw_os_error(errno as i32))
-    }
-}
-
-pub type Result<T> = std::result::Result<T, WireFormatError>;
 
 /*
  *
@@ -92,7 +48,7 @@ fn read_one<'a, T: Deserialize<'a>, R: Read>(r: R) -> Result<T> {
     // read one value.
     let mut iter = serde_cbor::Deserializer::from_reader(r).into_iter::<T>();
     let v = iter.next().transpose()?;
-    v.ok_or(WireFormatError::ValueMissing)
+    v.ok_or_else(|| WireFormatError::ValueMissing(Backtrace::capture()))
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -491,7 +447,7 @@ impl MetadataBlob {
 
     pub fn seek_ref(&mut self, r: &BlobRef) -> Result<u64> {
         match r.kind {
-            BlobRefKind::Other { .. } => Err(WireFormatError::SeekOtherError),
+            BlobRefKind::Other { .. } => Err(WireFormatError::SeekOtherError(Backtrace::capture())),
             BlobRefKind::Local => self
                 .f
                 .seek(io::SeekFrom::Start(r.offset))
