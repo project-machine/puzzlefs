@@ -1,3 +1,4 @@
+use std::backtrace::Backtrace;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -40,7 +41,10 @@ impl Index {
         let index_file = fs::File::open(p)?;
         let index = serde_json::from_reader::<_, Index>(index_file)?;
         if index.version != PUZZLEFS_SCHEMA_VERSION {
-            Err(WireFormatError::InvalidImageSchema(index.version))
+            Err(WireFormatError::InvalidImageSchema(
+                index.version,
+                Backtrace::capture(),
+            ))
         } else {
             Ok(index)
         }
