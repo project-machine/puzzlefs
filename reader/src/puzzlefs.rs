@@ -138,7 +138,7 @@ impl<'a> PuzzleFS<'a> {
                     .map_err(|e| e.into())
             })
             .collect::<format::Result<Vec<MetadataBlob>>>()?;
-        Ok(PuzzleFS { layers, oci })
+        Ok(PuzzleFS { oci, layers })
     }
 
     pub fn find_inode(&mut self, ino: u64) -> Result<Inode> {
