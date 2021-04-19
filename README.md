@@ -107,6 +107,6 @@ By making a contribution to this project, I certify that:
 
 ### License
 
-stacker is released under the [Apache License, Version 2.0](LICENSE), and is:
+puzzlefs is released under the [Apache License, Version 2.0](LICENSE), and is:
 
 Copyright (C) 2020-2021 Cisco Systems, Inc.
