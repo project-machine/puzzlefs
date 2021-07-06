@@ -62,17 +62,93 @@ impl Rootfs {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BlobRefKind {
     Local,
     Other { digest: [u8; 32] },
 }
 
+const BLOB_REF_SIZE: usize = 1 /* mode */ + 32 /* digest */ + 8 /* offset */;
+
 // TODO: should this be an ociv1 digest and include size and media type?
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BlobRef {
     pub offset: u64,
     pub kind: BlobRefKind,
+}
+
+impl BlobRef {
+    fn fixed_length_serialize(&self, state: &mut [u8; BLOB_REF_SIZE]) {
+        state[0..8].copy_from_slice(&self.offset.to_le_bytes());
+        match self.kind {
+            BlobRefKind::Local => state[8] = 0,
+            BlobRefKind::Other { ref digest } => {
+                state[8] = 1;
+                state[9..41].copy_from_slice(digest);
+            }
+        };
+    }
+
+    fn fixed_length_deserialize<E: SerdeError>(
+        state: &[u8; BLOB_REF_SIZE],
+    ) -> std::result::Result<BlobRef, E> {
+        let offset = u64::from_le_bytes(state[0..8].try_into().unwrap());
+
+        let kind = match state[8] {
+            0 => BlobRefKind::Local,
+            1 => BlobRefKind::Other {
+                digest: state[9..41].try_into().unwrap(),
+            },
+            _ => {
+                return Err(SerdeError::custom(format!(
+                    "bad blob ref kind {}",
+                    state[0]
+                )))
+            }
+        };
+
+        Ok(BlobRef { offset, kind })
+    }
+}
+
+impl Serialize for BlobRef {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state: [u8; BLOB_REF_SIZE] = [0; BLOB_REF_SIZE];
+        self.fixed_length_serialize(&mut state);
+        serializer.serialize_bytes(&state)
+    }
+}
+
+impl<'de> Deserialize<'de> for BlobRef {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<BlobRef, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct BlobRefVisitor;
+
+        impl<'de> Visitor<'de> for BlobRefVisitor {
+            type Value = BlobRef;
+
+            fn expecting(&self, formatter: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                formatter.write_fmt(format_args!("expected {} bytes for BlobRef", BLOB_REF_SIZE))
+            }
+
+            fn visit_bytes<E>(self, v: &[u8]) -> std::result::Result<BlobRef, E>
+            where
+                E: SerdeError,
+            {
+                let state: [u8; BLOB_REF_SIZE] = v
+                    .try_into()
+                    .map_err(|_| SerdeError::invalid_length(v.len(), &self))?;
+                BlobRef::fixed_length_deserialize(&state)
+            }
+        }
+
+        deserializer.deserialize_bytes(BlobRefVisitor)
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -104,7 +180,7 @@ pub struct FileChunk {
     pub len: u64,
 }
 
-const INODE_MODE_SIZE: usize = 1 + 8 + 8;
+const INODE_MODE_SIZE: usize = 1 /* mode */ + mem::size_of::<u64>() * 2 /* major/minor/offset */;
 
 // InodeMode needs to have custom serialization because inodes must be a fixed size.
 #[derive(Debug, PartialEq)]
@@ -122,8 +198,7 @@ pub enum InodeMode {
 
 pub type Ino = u64;
 
-const INODE_SIZE: usize =
-    mem::size_of::<Ino>() + INODE_MODE_SIZE + mem::size_of::<u32>() + mem::size_of::<u32>();
+const INODE_SIZE: usize = mem::size_of::<Ino>() + INODE_MODE_SIZE + mem::size_of::<u64>() + mem::size_of::<u64>() + 1 /* Option<BlobRef> */ + BLOB_REF_SIZE;
 
 pub const fn cbor_size_of_list_header(size: usize) -> usize {
     match size {
@@ -143,8 +218,7 @@ pub struct Inode {
     pub mode: InodeMode,
     pub uid: u32,
     pub gid: u32,
-    // TODO: FIXME: need fixed length serialization for this
-    //pub additional: Option<BlobRef>,
+    pub additional: Option<BlobRef>,
 }
 
 impl Serialize for Inode {
@@ -185,6 +259,13 @@ impl Serialize for Inode {
 
         state[25..29].copy_from_slice(&self.uid.to_le_bytes());
         state[29..33].copy_from_slice(&self.gid.to_le_bytes());
+        if let Some(additional) = self.additional {
+            state[34] = 1;
+            additional
+                .fixed_length_serialize((&mut state[35..35 + BLOB_REF_SIZE]).try_into().unwrap());
+        } else {
+            state[34] = 0;
+        }
         serializer.serialize_bytes(&state)
     }
 }
@@ -243,6 +324,14 @@ impl<'de> Deserialize<'de> for Inode {
                     }
                 };
 
+                let additional = if state[34] > 0 {
+                    Some(BlobRef::fixed_length_deserialize(
+                        state[35..35 + BLOB_REF_SIZE].try_into().unwrap(),
+                    )?)
+                } else {
+                    None
+                };
+
                 Ok(Inode {
                     // ugh there must be a nicer way to do this with arrays, which we already have
                     // from above...
@@ -250,6 +339,7 @@ impl<'de> Deserialize<'de> for Inode {
                     mode,
                     uid: u32::from_le_bytes(state[25..29].try_into().unwrap()),
                     gid: u32::from_le_bytes(state[29..33].try_into().unwrap()),
+                    additional,
                 })
             }
         }
@@ -326,13 +416,18 @@ impl Inode {
         Ok(Self::new_inode(ino, md, mode, additional))
     }
 
-    fn new_inode(ino: Ino, md: &fs::Metadata, mode: InodeMode, _: Option<BlobRef>) -> Self {
+    fn new_inode(
+        ino: Ino,
+        md: &fs::Metadata,
+        mode: InodeMode,
+        additional: Option<BlobRef>,
+    ) -> Self {
         Inode {
             ino,
             mode,
             uid: md.uid(),
             gid: md.gid(),
-            // additional, TODO: fixed length serialize
+            additional,
         }
     }
 
@@ -359,18 +454,21 @@ mod tests {
                 mode: InodeMode::Unknown,
                 uid: 0,
                 gid: 0,
+                additional: None,
             },
             Inode {
                 ino: 0,
                 mode: InodeMode::Lnk,
                 uid: 0,
                 gid: 0,
+                additional: None,
             },
             Inode {
                 ino: 0,
                 mode: InodeMode::Reg { offset: 64 },
                 uid: 0,
                 gid: 0,
+                additional: None,
             },
             Inode {
                 ino: 65343,
@@ -380,6 +478,17 @@ mod tests {
                 },
                 uid: 10,
                 gid: 10000,
+                additional: None,
+            },
+            Inode {
+                ino: 0,
+                mode: InodeMode::Lnk,
+                uid: 0,
+                gid: 0,
+                additional: Some(BlobRef {
+                    offset: 42,
+                    kind: BlobRefKind::Local,
+                }),
             },
         ];
 
@@ -389,6 +498,36 @@ mod tests {
             assert_eq!(wire.len(), INODE_WIRE_SIZE, "{:?}", test);
             assert_eq!(test, after);
         }
+    }
+
+    fn blobref_roundtrip(original: BlobRef) {
+        let mut serialized = [0_u8; BLOB_REF_SIZE];
+        original.fixed_length_serialize(&mut serialized);
+        // we lie here and say this is a serde_cbor error, even though it really doesn't matter...
+        let deserialized =
+            BlobRef::fixed_length_deserialize::<serde_cbor::error::Error>(&serialized).unwrap();
+        assert_eq!(original, deserialized);
+    }
+
+    #[test]
+    fn test_local_blobref_serialization() {
+        let local = BlobRef {
+            offset: 42,
+            kind: BlobRefKind::Local,
+        };
+        blobref_roundtrip(local)
+    }
+
+    #[test]
+    fn test_other_blobref_serialization() {
+        let mut digest = [0_u8; 32];
+        digest[0] = 0;
+        digest[31] = 31;
+        let other = BlobRef {
+            offset: 42,
+            kind: BlobRefKind::Other { digest },
+        };
+        blobref_roundtrip(other)
     }
 }
 
@@ -462,6 +601,11 @@ impl MetadataBlob {
 
     pub fn read_dir_list(&mut self, offset: u64) -> Result<DirList> {
         self.f.seek(io::SeekFrom::Start(offset))?;
+        read_one(&mut self.f)
+    }
+
+    pub fn read_inode_additional(&mut self, r: &BlobRef) -> Result<InodeAdditional> {
+        self.seek_ref(r)?;
         read_one(&mut self.f)
     }
 
