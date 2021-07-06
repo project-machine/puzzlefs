@@ -115,7 +115,7 @@ impl io::Write for FastCDCWrapper {
             let room = min(self.buf.len() - self.buf_offset, write.len() - write_offset);
             let cur = &write[write_offset..write_offset + room];
             if self.buf_offset + cur.len() <= self.buf.len() {
-                self.buf[self.buf_offset..self.buf_offset + cur.len()].copy_from_slice(&cur);
+                self.buf[self.buf_offset..self.buf_offset + cur.len()].copy_from_slice(cur);
                 self.buf_offset += cur.len();
                 write_offset += cur.len();
             }

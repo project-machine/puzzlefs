@@ -197,7 +197,7 @@ pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Descriptor> {
             let mut f = fs::File::open(e.path())?;
             io::copy(&mut f, &mut fcdc)?;
 
-            let mut written_chunks = write_chunks_to_oci(&oci, &mut fcdc)?;
+            let mut written_chunks = write_chunks_to_oci(oci, &mut fcdc)?;
             let mut file = File {
                 ino: cur_ino,
                 md,
@@ -227,7 +227,7 @@ pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Descriptor> {
 
     // all inodes done, we need to finish up the cdc chunking
     fcdc.finish();
-    let mut written_chunks = write_chunks_to_oci(&oci, &mut fcdc)?;
+    let mut written_chunks = write_chunks_to_oci(oci, &mut fcdc)?;
 
     // if we have chunks, we should have files too
     assert!(written_chunks.is_empty() || !prev_files.is_empty());

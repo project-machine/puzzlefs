@@ -19,7 +19,7 @@ pub fn mount<'a>(
     tag: &str,
     mountpoint: &Path,
 ) -> Result<fuse_ffi::BackgroundSession<'a>> {
-    let pfs = PuzzleFS::open(&image, tag)?;
+    let pfs = PuzzleFS::open(image, tag)?;
     let fuse = Fuse::new(pfs);
     let session = fuse_ffi::Session::new(fuse, mountpoint, &[])?;
     let bg = unsafe { fuse_ffi::BackgroundSession::new(session) }?;

@@ -98,12 +98,12 @@ impl<'a> Image<'a> {
         &self,
         digest: &Digest,
     ) -> io::Result<Box<dyn Decompressor>> {
-        let f = self.open_raw_blob(&digest)?;
+        let f = self.open_raw_blob(digest)?;
         Ok(C::decompress(f))
     }
 
     pub fn open_metadata_blob<C: Compression>(&self, digest: &Digest) -> io::Result<MetadataBlob> {
-        let f = self.open_raw_blob(&digest)?;
+        let f = self.open_raw_blob(digest)?;
         Ok(MetadataBlob::new::<C>(f))
     }
 

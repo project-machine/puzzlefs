@@ -63,7 +63,7 @@ pub struct DirEntry<'a> {
 impl<'a> DirEntry<'a> {
     /// Opens this DirEntry if it is a file.
     pub fn open(&'a self) -> Result<FileReader<'a>> {
-        FileReader::new(&self.oci, &self.inode)
+        FileReader::new(self.oci, &self.inode)
     }
 }
 
