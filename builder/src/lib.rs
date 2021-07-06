@@ -57,6 +57,12 @@ struct File {
     additional: Option<InodeAdditional>,
 }
 
+struct Other {
+    ino: u64,
+    md: fs::Metadata,
+    additional: Option<InodeAdditional>,
+}
+
 fn write_chunks_to_oci(oci: &Image, fcdc: &mut FastCDCWrapper) -> Result<Vec<FileChunk>> {
     let mut pending_chunks = Vec::<ChunkWithData>::new();
     fcdc.get_pending_chunks(&mut pending_chunks);
@@ -134,6 +140,7 @@ fn inode_encoded_size(num_inodes: usize) -> usize {
 pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Descriptor> {
     let mut dirs = HashMap::<u64, Dir>::new();
     let mut files = Vec::<File>::new();
+    let mut others = Vec::<Other>::new();
     let mut pfs_inodes = Vec::<Inode>::new();
 
     // host to puzzlefs inode mapping for hard link deteciton
@@ -218,8 +225,12 @@ pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Descriptor> {
                 file.chunk_list.chunks.append(&mut written_chunks);
             }
         } else {
-            let inode = Inode::new_other(cur_ino, &md, None /* TODO: additional */)?;
-            pfs_inodes.push(inode);
+            let o = Other {
+                ino: cur_ino,
+                md,
+                additional,
+            };
+            others.push(o);
         }
 
         cur_ino += 1;
@@ -244,7 +255,7 @@ pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Descriptor> {
     }
 
     // total inode serailized size
-    let num_inodes = pfs_inodes.len() + dirs.len() + files.len();
+    let num_inodes = pfs_inodes.len() + dirs.len() + files.len() + others.len();
     let inodes_serial_size = inode_encoded_size(num_inodes);
 
     // TODO: not render this whole thing in memory, stick it all in the same blob, etc.
@@ -310,15 +321,43 @@ pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Descriptor> {
             })
             .collect::<Result<Vec<Inode>>>()?,
     );
+
+    let mut others_buf = Vec::<u8>::new();
+
+    pfs_inodes.extend(
+        others
+            .drain(..)
+            .map(|o| {
+                let additional_ref = o
+                    .additional
+                    .as_ref()
+                    .map::<Result<BlobRef>, _>(|add| {
+                        let offset =
+                            inodes_serial_size + dir_buf.len() + files_buf.len() + others_buf.len();
+                        serde_cbor::to_writer(&mut others_buf, &add)?;
+                        Ok(BlobRef {
+                            offset: offset as u64,
+                            kind: BlobRefKind::Local,
+                        })
+                    })
+                    .transpose()?;
+                Ok(Inode::new_other(o.ino, &o.md, additional_ref)?)
+            })
+            .collect::<Result<Vec<Inode>>>()?,
+    );
+
     pfs_inodes.sort_by(|a, b| a.ino.cmp(&b.ino));
 
-    let mut md_buf = Vec::<u8>::with_capacity(inodes_serial_size + dir_buf.len() + files_buf.len());
+    let mut md_buf = Vec::<u8>::with_capacity(
+        inodes_serial_size + dir_buf.len() + files_buf.len() + others_buf.len(),
+    );
     serde_cbor::to_writer(&mut md_buf, &pfs_inodes)?;
 
     assert_eq!(md_buf.len(), inodes_serial_size);
 
     md_buf.append(&mut dir_buf);
     md_buf.append(&mut files_buf);
+    md_buf.append(&mut others_buf);
 
     let desc = oci.put_blob::<_, compression::Noop, media_types::Inodes>(md_buf.as_slice())?;
     let metadatas = [BlobRef {
