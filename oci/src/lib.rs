@@ -189,4 +189,17 @@ mod tests {
         let index2 = image2.get_index().unwrap();
         assert_eq!(index.manifests, index2.manifests);
     }
+
+    #[test]
+    fn double_put_ok() {
+        let dir = tempdir().unwrap();
+        let image = Image::new(dir.path()).unwrap();
+        let desc1 = image
+            .put_blob::<_, compression::Noop, media_types::Chunk>("meshuggah rocks".as_bytes())
+            .unwrap();
+        let desc2 = image
+            .put_blob::<_, compression::Noop, media_types::Chunk>("meshuggah rocks".as_bytes())
+            .unwrap();
+        assert_eq!(desc1, desc2);
+    }
 }
