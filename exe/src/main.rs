@@ -9,7 +9,7 @@ use std::path::{Component, Path, PathBuf};
 
 use clap::Clap;
 use nix::sys::stat::{makedev, mknod, Mode, SFlag};
-use nix::unistd::mkfifo;
+use nix::unistd::{mkfifo, symlinkat};
 use signal_hook::consts::TERM_SIGNALS;
 use signal_hook::iterator::exfiltrator::SignalOnly;
 use signal_hook::iterator::SignalsInfo;
@@ -157,7 +157,10 @@ fn main() -> anyhow::Result<()> {
                             format::InodeMode::Blk { major, minor } => {
                                 mknod(&path, SFlag::S_IFBLK, Mode::S_IRWXU, makedev(major, minor))?;
                             }
-                            format::InodeMode::Lnk => (),
+                            format::InodeMode::Lnk => {
+                                let target = dir_entry.inode.symlink_target()?;
+                                symlinkat(target.as_os_str(), None, &path)?;
+                            }
                             format::InodeMode::Sock => {
                                 todo!();
                             }
