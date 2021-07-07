@@ -5,13 +5,14 @@ use std::io;
 
 use nix::errno::Errno;
 
-use format::{FileChunk, Ino, MetadataBlob, Result, WireFormatError};
+use format::{FileChunk, Ino, InodeAdditional, MetadataBlob, Result, WireFormatError};
 use oci::{Digest, Image};
 
 #[derive(Debug)]
 pub struct Inode {
     pub inode: format::Inode,
     pub mode: InodeMode,
+    pub additional: Option<InodeAdditional>,
 }
 
 impl Inode {
@@ -34,7 +35,16 @@ impl Inode {
             _ => InodeMode::Other,
         };
 
-        Ok(Inode { inode, mode })
+        let additional = inode
+            .additional
+            .map(|additional_ref| layer.read_inode_additional(&additional_ref))
+            .transpose()?;
+
+        Ok(Inode {
+            inode,
+            mode,
+            additional,
+        })
     }
 
     pub fn dir_entries(&self) -> Result<&Vec<(OsString, Ino)>> {
@@ -60,6 +70,14 @@ impl Inode {
             _ => return Err(WireFormatError::from_errno(Errno::ENOTDIR)),
         };
         Ok(chunks.iter().map(|c| c.len).sum())
+    }
+
+    pub fn symlink_target(&self) -> Result<&OsString> {
+        self.additional
+            .as_ref()
+            .map(|a| a.symlink_target.as_ref())
+            .flatten()
+            .ok_or_else(|| WireFormatError::from_errno(Errno::ENOENT))
     }
 }
 
