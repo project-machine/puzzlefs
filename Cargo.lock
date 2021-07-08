@@ -653,6 +653,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "time",
+ "xattr",
 ]
 
 [[package]]

@@ -69,9 +69,13 @@ impl<'a> DirEntry<'a> {
 
 #[cfg(test)]
 mod tests {
+    extern crate xattr;
+
     use tempfile::tempdir;
 
-    use builder::build_test_fs;
+    use std::fs;
+
+    use builder::{build_initial_rootfs, build_test_fs};
     use oci::Image;
 
     use super::*;
@@ -96,5 +100,54 @@ mod tests {
         assert_eq!(jpg_file.path.to_string_lossy(), "/SekienAkashita.jpg");
         assert_eq!(jpg_file.inode.inode.ino, 2);
         assert_eq!(jpg_file.inode.file_len().unwrap(), 109466);
+    }
+
+    #[test]
+    fn test_xattrs() {
+        // since walk provides us a nice API, we test some other basics of the builder here too.
+        let dir = tempdir().unwrap();
+        let oci_dir = dir.path().join("oci");
+        let image = Image::new(&oci_dir).unwrap();
+        let rootfs = dir.path().join("rootfs");
+
+        let foo = rootfs.join("foo");
+        let bar = rootfs.join("bar");
+
+        // test directory, file types. we should probably also test "other" types, but on fifos and
+        // symlinks on linux xattrs aren't allowed, so we just punt for now. maybe when 5.8 is more
+        // prevalent, we can use mknod c 0 0?
+        fs::create_dir_all(&foo).unwrap();
+        fs::write(&bar, b"bar").unwrap();
+
+        // set some xattrs
+        for f in [&foo, &bar] {
+            xattr::set(f, "user.meshuggah", b"rocks").unwrap();
+        }
+
+        let rootfs_desc = build_initial_rootfs(&rootfs, &image).unwrap();
+
+        image.add_tag("test".to_string(), rootfs_desc).unwrap();
+        let mut pfs = PuzzleFS::open(&image, "test").unwrap();
+
+        let mut walker = WalkPuzzleFS::walk(&mut pfs).unwrap();
+
+        let root = walker.next().unwrap().unwrap();
+        assert_eq!(root.path.to_string_lossy(), "/");
+        assert_eq!(root.inode.inode.ino, 1);
+        assert_eq!(root.inode.dir_entries().unwrap().len(), 2);
+
+        fn check_inode_xattrs(inode: Inode) {
+            let additional = inode.additional.unwrap();
+            assert_eq!(additional.xattrs[0].key, "user.meshuggah");
+            assert_eq!(additional.xattrs[0].val.as_ref().unwrap(), b"rocks");
+        }
+
+        let bar_i = walker.next().unwrap().unwrap();
+        assert_eq!(bar_i.path.to_string_lossy(), "/bar");
+        check_inode_xattrs(bar_i.inode);
+
+        let foo_i = walker.next().unwrap().unwrap();
+        assert_eq!(foo_i.path.to_string_lossy(), "/foo");
+        check_inode_xattrs(foo_i.inode);
     }
 }
