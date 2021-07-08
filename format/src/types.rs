@@ -645,6 +645,11 @@ impl MetadataBlob {
     }
 
     pub fn read_inodes(&mut self) -> Result<Vec<Inode>> {
+        self.f.seek(io::SeekFrom::Start(0))?;
         read_one(&mut self.f)
+    }
+
+    pub fn max_ino(&mut self) -> Result<Option<Ino>> {
+        Ok(self.read_inodes()?.last().map(|inode| inode.ino))
     }
 }
