@@ -168,6 +168,17 @@ impl<'a> PuzzleFS<'a> {
 
         Err(format::WireFormatError::from_errno(Errno::ENOENT))
     }
+
+    pub fn max_inode(&mut self) -> Result<Ino> {
+        let mut max: Ino = 1;
+        for layer in self.layers.iter_mut() {
+            if let Some(ino) = layer.max_ino()? {
+                max = std::cmp::max(ino, max)
+            }
+        }
+
+        Ok(max)
+    }
 }
 
 pub struct FileReader<'a> {
@@ -232,5 +243,6 @@ mod tests {
             hex::encode(digest),
             "d9e749d9367fc908876749d6502eb212fee88c9a94892fb07da5ef3ba8bc39ed"
         );
+        assert_eq!(pfs.max_inode().unwrap(), 2);
     }
 }
