@@ -19,3 +19,4 @@ builder = { path = "../builder" }
 tempfile = "*"
 sha2 = "*"
 hex = "*"
+xattr = "*"
