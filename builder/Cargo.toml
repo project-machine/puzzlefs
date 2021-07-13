@@ -15,3 +15,4 @@ fastcdc = "*"
 [dev-dependencies]
 tempfile = "*"
 serde = "*"
+fastrand = "*"

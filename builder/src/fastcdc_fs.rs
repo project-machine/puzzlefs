@@ -136,9 +136,12 @@ impl io::Write for FastCDCWrapper {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use fastcdc::Chunk;
     use std::fs;
+
+    use fastcdc::Chunk;
+    use fastrand::Rng;
+
+    use super::*;
 
     #[test]
     fn test_single_write_ok() {
@@ -209,5 +212,74 @@ mod tests {
 
         // giant write (aka, are any of these buffers stack allocated :)
         multiple_writes_size(100 * 1024 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_stabilization_rate() {
+        const FCDC_MIN: usize = 8192;
+        const FCDC_AVG: usize = 16384;
+        const FCDC_MAX: usize = 32768;
+
+        fn do_fcdc(seed: u64, modifier: fn(&mut Vec<u8>), chunks: usize) -> Vec<Chunk> {
+            let rng = Rng::with_seed(seed);
+
+            let mut buf = vec![0_u8; chunks * FCDC_AVG];
+            for x in buf.iter_mut() {
+                *x = rng.u8(0..255)
+            }
+            modifier(&mut buf);
+            FastCDC::new(&buf, FCDC_MIN, FCDC_AVG, FCDC_MAX).collect()
+        }
+
+        let original = do_fcdc(0, |_| {}, 10);
+
+        fn change_one_byte(buf: &mut Vec<u8>) {
+            // change a byte in the "2nd" chunk (well, the average second chunk...)
+            buf[2 * FCDC_AVG] ^= 0xff_u8;
+        }
+
+        let changed_one = do_fcdc(0, change_one_byte, 10);
+
+        // FCDC is good enough to chunk things exactly the same way with only one byte difference
+        assert_eq!(original, changed_one);
+
+        fn change_kb(buf: &mut Vec<u8>) {
+            for i in 0..1024 {
+                buf[2 * FCDC_AVG + i] ^= 0xff_u8;
+            }
+        }
+        let changed_kb = do_fcdc(0, change_kb, 10);
+        assert_eq!(original, changed_kb);
+
+        // and good enough in the face of a contiguous MIN size chunk
+        fn change_min(buf: &mut Vec<u8>) {
+            for i in 0..FCDC_MIN {
+                buf[2 * FCDC_AVG + i] ^= 0xff_u8;
+            }
+        }
+        let changed_min = do_fcdc(0, change_min, 10);
+        assert_eq!(original, changed_min);
+
+        fn change_avg(buf: &mut Vec<u8>) {
+            for i in 0..FCDC_AVG {
+                buf[2 * FCDC_AVG + i] ^= 0xff_u8;
+            }
+        }
+
+        // but not an AVG size chunk
+        let changed_avg = do_fcdc(0, change_avg, 10);
+        assert_ne!(original, changed_avg);
+
+        // though it's *pretty* close...
+        assert_eq!(original[0], changed_avg[0]);
+        assert_eq!(original[1], changed_avg[1]);
+        assert_ne!(original[2], changed_avg[2]);
+        assert_ne!(original[3], changed_avg[3]);
+        assert_eq!(original[4], changed_avg[4]);
+        assert_eq!(original[5], changed_avg[5]);
+        assert_eq!(original[6], changed_avg[6]);
+        assert_eq!(original[7], changed_avg[7]);
+        assert_eq!(original[8], changed_avg[8]);
+        assert_eq!(original[9], changed_avg[9]);
     }
 }
