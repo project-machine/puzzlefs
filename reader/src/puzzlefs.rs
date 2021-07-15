@@ -2,6 +2,7 @@ use std::cmp::min;
 use std::convert::TryFrom;
 use std::ffi::{OsStr, OsString};
 use std::io;
+use std::path::{Component, Path};
 
 use nix::errno::Errno;
 
@@ -168,6 +169,34 @@ impl<'a> PuzzleFS<'a> {
 
         Err(format::WireFormatError::from_errno(Errno::ENOENT))
     }
+
+    // lookup performs a path-based lookup in this puzzlefs
+    pub fn lookup(&mut self, p: &Path) -> Result<Option<Inode>> {
+        let components = p.components().collect::<Vec<Component>>();
+        if !matches!(components[0], Component::RootDir) {
+            return Err(WireFormatError::from_errno(Errno::EINVAL));
+        }
+
+        let mut cur = self.find_inode(1)?;
+
+        // TODO: better path resolution with .. and such?
+        for comp in components.into_iter().skip(1) {
+            match comp {
+                Component::Normal(p) => {
+                    if let InodeMode::Dir { entries } = cur.mode {
+                        if let Some((_, ino)) = entries.into_iter().find(|(path, _)| path == p) {
+                            cur = self.find_inode(ino)?;
+                            continue;
+                        }
+                    }
+                    return Ok(None);
+                }
+                _ => return Err(WireFormatError::from_errno(Errno::EINVAL)),
+            }
+        }
+
+        Ok(Some(cur))
+    }
 }
 
 pub struct FileReader<'a> {
@@ -232,5 +261,27 @@ mod tests {
             hex::encode(digest),
             "d9e749d9367fc908876749d6502eb212fee88c9a94892fb07da5ef3ba8bc39ed"
         );
+    }
+
+    #[test]
+    fn test_path_lookup() {
+        let oci_dir = tempdir().unwrap();
+        let image = Image::new(oci_dir.path()).unwrap();
+        let rootfs_desc = build_test_fs(&image).unwrap();
+        image.add_tag("test".to_string(), rootfs_desc).unwrap();
+        let mut pfs = PuzzleFS::open(&image, "test").unwrap();
+
+        assert_eq!(pfs.lookup(Path::new("/")).unwrap().unwrap().inode.ino, 1);
+        assert_eq!(
+            pfs.lookup(Path::new("/SekienAkashita.jpg"))
+                .unwrap()
+                .unwrap()
+                .inode
+                .ino,
+            2
+        );
+        assert!(pfs.lookup(Path::new("/notexist")).unwrap().is_none());
+        assert!(pfs.lookup(Path::new("./invalid-path")).is_err());
+        assert!(pfs.lookup(Path::new("invalid-path")).is_err());
     }
 }
