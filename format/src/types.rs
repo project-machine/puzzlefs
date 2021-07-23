@@ -416,6 +416,16 @@ impl Inode {
         Ok(Self::new_inode(ino, md, mode, additional))
     }
 
+    pub fn new_whiteout(ino: Ino) -> Self {
+        Inode {
+            ino,
+            mode: InodeMode::Wht,
+            uid: 0,
+            gid: 0,
+            additional: None,
+        }
+    }
+
     fn new_inode(
         ino: Ino,
         md: &fs::Metadata,

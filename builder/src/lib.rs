@@ -1,5 +1,6 @@
 use std::cmp::min;
 use std::collections::HashMap;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io;
 use std::os::unix::fs::MetadataExt;
@@ -9,17 +10,21 @@ use walkdir::WalkDir;
 
 use format::{
     BlobRef, BlobRefKind, DirEnt, DirList, FileChunk, FileChunkList, Ino, Inode, InodeAdditional,
-    Result, Rootfs,
+    Result, Rootfs, WireFormatError,
 };
 use oci::media_types;
 use oci::{Descriptor, Image};
+use reader::PuzzleFS;
+
+use nix::errno::Errno;
 
 mod fastcdc_fs;
 use fastcdc_fs::{ChunkWithData, FastCDCWrapper};
 
 fn walker(rootfs: &Path) -> WalkDir {
     // breadth first search for sharing, don't cross filesystems just to be safe, order by file
-    // name.
+    // name. we only return directories here, so we can more easily do delta generation to detect
+    // what's missing in an existing puzzlefs.
     WalkDir::new(rootfs)
         .contents_first(false)
         .follow_links(false)
@@ -37,15 +42,8 @@ struct Dir {
 }
 
 impl Dir {
-    fn add_entry(&mut self, p: &Path, ino: Ino) -> io::Result<()> {
-        let name = p.file_name().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::Other, format!("no path for {}", p.display()))
-        })?;
-        self.dir_list.entries.push(DirEnt {
-            name: name.to_os_string(),
-            ino,
-        });
-        Ok(())
+    fn add_entry(&mut self, name: OsString, ino: Ino) {
+        self.dir_list.entries.push(DirEnt { name, ino });
     }
 }
 
@@ -137,7 +135,7 @@ fn inode_encoded_size(num_inodes: usize) -> usize {
     format::cbor_size_of_list_header(num_inodes) + num_inodes * format::INODE_WIRE_SIZE
 }
 
-pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Descriptor> {
+fn build_delta(rootfs: &Path, oci: &Image, mut existing: Option<PuzzleFS>) -> Result<Descriptor> {
     let mut dirs = HashMap::<u64, Dir>::new();
     let mut files = Vec::<File>::new();
     let mut others = Vec::<Other>::new();
@@ -146,94 +144,189 @@ pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Descriptor> {
     // host to puzzlefs inode mapping for hard link deteciton
     let mut host_to_pfs = HashMap::<u64, Ino>::new();
 
-    let mut cur_ino: u64 = 1;
+    let mut next_ino: u64 = existing
+        .as_mut()
+        .map(|pfs| pfs.max_inode().map(|i| i + 1))
+        .unwrap_or(Ok(2))?;
 
     let mut fcdc = FastCDCWrapper::new();
     let mut prev_files = Vec::<File>::new();
 
-    for entry in walker(rootfs) {
-        let e = entry.map_err(io::Error::from)?;
-        let md = e.metadata().map_err(io::Error::from)?;
+    fn lookup_existing(existing: &mut Option<PuzzleFS>, p: &Path) -> Result<Option<reader::Inode>> {
+        existing
+            .as_mut()
+            .map(|pfs| pfs.lookup(p))
+            .transpose()
+            .map(|o| o.flatten())
+    }
 
-        // now that we know the ino of this thing, let's put it in the parent directory (assuming
-        // this is not "/" for our image, aka inode #1)
-        if cur_ino != 1 {
-            // is this a hard link? if so, just use the existing ino we have rendered. otherewise,
-            // use a new one
-            let the_ino = host_to_pfs.get(&md.ino()).copied().unwrap_or(cur_ino);
-            let parent_path = e.path().parent().ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("no parent for {}", e.path().display()),
-                )
-            })?;
-            let parent = dirs
-                .get_mut(&fs::symlink_metadata(parent_path)?.ino())
-                .ok_or_else(|| {
+    let rootfs_dirs = walker(rootfs)
+        .into_iter()
+        .filter_entry(|de| de.metadata().map(|md| md.is_dir()).unwrap_or(true));
+
+    // we specially create the "/" InodeMode::Dir object, since we will not iterate over it as a
+    // child of some other directory
+    let root_metadata = fs::symlink_metadata(&rootfs)?;
+    let root_additional = InodeAdditional::new(rootfs, &root_metadata)?;
+    dirs.insert(
+        root_metadata.ino(),
+        Dir {
+            ino: 1,
+            md: root_metadata,
+            dir_list: DirList {
+                entries: Vec::<DirEnt>::new(),
+                look_below: false,
+            },
+            additional: root_additional,
+        },
+    );
+
+    let rootfs_relative = |p: &Path| {
+        // .unwrap() here because we assume no programmer errors in this function (i.e. it is a
+        // puzzlefs bug here)
+        Path::new("/").join(p.strip_prefix(rootfs).unwrap())
+    };
+
+    for dir in rootfs_dirs {
+        let d = dir.map_err(io::Error::from)?;
+        let dir_path = rootfs_relative(d.path());
+        let existing_dirents: Vec<_> = lookup_existing(&mut existing, &dir_path)?
+            .map(|ex| -> Option<Vec<_>> {
+                if let reader::InodeMode::Dir { entries } = ex.mode {
+                    Some(entries)
+                } else {
+                    None
+                }
+            })
+            .flatten()
+            .unwrap_or_else(Vec::new);
+
+        let new_dirents = fs::read_dir(d.path())?.collect::<io::Result<Vec<fs::DirEntry>>>()?;
+
+        // add whiteout information
+        let this_metadata = fs::symlink_metadata(d.path())?;
+        let this_dir = dirs
+            .get_mut(&this_metadata.ino())
+            .ok_or_else(|| WireFormatError::from_errno(Errno::ENOENT))?;
+        for (name, ino) in existing_dirents {
+            if !(&new_dirents)
+                .iter()
+                .any(|new| new.path().file_name().unwrap_or_else(|| OsStr::new("")) == name)
+            {
+                pfs_inodes.push(Inode::new_whiteout(ino));
+                this_dir.add_entry(name, ino);
+            }
+        }
+
+        for e in new_dirents {
+            let md = e.metadata()?;
+
+            let existing_inode = existing
+                .as_mut()
+                .map(|pfs| {
+                    let puzzlefs_path = rootfs_relative(&e.path());
+                    pfs.lookup(&puzzlefs_path)
+                })
+                .transpose()?
+                .flatten();
+
+            let cur_ino = existing_inode.map(|ex| ex.inode.ino).unwrap_or_else(|| {
+                let next = next_ino;
+                next_ino += 1;
+                next
+            });
+
+            // now that we know the ino of this thing, let's put it in the parent directory (assuming
+            // this is not "/" for our image, aka inode #1)
+            if cur_ino != 1 {
+                // is this a hard link? if so, just use the existing ino we have rendered. otherewise,
+                // use a new one
+                let the_ino = host_to_pfs.get(&md.ino()).copied().unwrap_or(cur_ino);
+                let parent_path = e.path().parent().map(|p| p.to_path_buf()).ok_or_else(|| {
                     io::Error::new(
                         io::ErrorKind::Other,
-                        format!("no pfs inode for {}", e.path().display()),
+                        format!("no parent for {}", e.path().display()),
                     )
                 })?;
-            parent.add_entry(e.path(), the_ino)?;
+                let parent = dirs
+                    .get_mut(&fs::symlink_metadata(parent_path)?.ino())
+                    .ok_or_else(|| {
+                        io::Error::new(
+                            io::ErrorKind::Other,
+                            format!("no pfs inode for {}", e.path().display()),
+                        )
+                    })?;
+                parent.add_entry(
+                    e.path()
+                        .file_name()
+                        .unwrap_or_else(|| OsStr::new(""))
+                        .to_os_string(),
+                    the_ino,
+                );
 
-            // if it was a hard link, we don't need to actually render it again
-            if host_to_pfs.get(&md.ino()).is_some() {
-                continue;
+                // if it was a hard link, we don't need to actually render it again
+                if host_to_pfs.get(&md.ino()).is_some() {
+                    continue;
+                }
             }
-        }
 
-        host_to_pfs.insert(md.ino(), cur_ino);
+            host_to_pfs.insert(md.ino(), cur_ino);
 
-        // render as much of the inode as we can
-        let additional = InodeAdditional::new(e.path(), &md)?;
-        if md.is_dir() {
-            dirs.insert(
-                md.ino(),
-                Dir {
+            // render as much of the inode as we can
+            // TODO: here are a bunch of optimizations we should do: no need to re-render things
+            // that are the same (whole inodes, metadata, etc.). For now we just re-render the
+            // whole metadata tree.
+            let additional = InodeAdditional::new(&e.path(), &md)?;
+
+            if md.is_dir() {
+                dirs.insert(
+                    md.ino(),
+                    Dir {
+                        ino: cur_ino,
+                        md,
+                        dir_list: DirList {
+                            entries: Vec::<DirEnt>::new(),
+                            look_below: false,
+                        },
+                        additional,
+                    },
+                );
+            } else if md.is_file() {
+                let mut f = fs::File::open(e.path())?;
+                io::copy(&mut f, &mut fcdc)?;
+
+                let mut written_chunks = write_chunks_to_oci(oci, &mut fcdc)?;
+                let mut file = File {
                     ino: cur_ino,
                     md,
-                    dir_list: DirList {
-                        entries: Vec::<DirEnt>::new(),
-                        look_below: false,
+                    chunk_list: FileChunkList {
+                        chunks: Vec::<FileChunk>::new(),
                     },
                     additional,
-                },
-            );
-        } else if md.is_file() {
-            let mut f = fs::File::open(e.path())?;
-            io::copy(&mut f, &mut fcdc)?;
+                };
 
-            let mut written_chunks = write_chunks_to_oci(oci, &mut fcdc)?;
-            let mut file = File {
-                ino: cur_ino,
-                md,
-                chunk_list: FileChunkList {
-                    chunks: Vec::<FileChunk>::new(),
-                },
-                additional,
-            };
-
-            if written_chunks.is_empty() {
-                // this file wasn't big enough to cause a chunk to be generated, add it to the list
-                // of files pending for this chunk
-                prev_files.push(file);
+                if written_chunks.is_empty() {
+                    // this file wasn't big enough to cause a chunk to be generated, add it to the list
+                    // of files pending for this chunk
+                    prev_files.push(file);
+                } else {
+                    let fixed_chunk = merge_chunks_and_prev_files(
+                        &mut written_chunks,
+                        &mut files,
+                        &mut prev_files,
+                    )?;
+                    file.chunk_list.chunks.push(fixed_chunk);
+                    file.chunk_list.chunks.append(&mut written_chunks);
+                }
             } else {
-                let fixed_chunk =
-                    merge_chunks_and_prev_files(&mut written_chunks, &mut files, &mut prev_files)?;
-                file.chunk_list.chunks.push(fixed_chunk);
-                file.chunk_list.chunks.append(&mut written_chunks);
+                let o = Other {
+                    ino: cur_ino,
+                    md,
+                    additional,
+                };
+                others.push(o);
             }
-        } else {
-            let o = Other {
-                ino: cur_ino,
-                md,
-                additional,
-            };
-            others.push(o);
         }
-
-        cur_ino += 1;
     }
 
     // all inodes done, we need to finish up the cdc chunking
@@ -359,7 +452,11 @@ pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Descriptor> {
     md_buf.append(&mut files_buf);
     md_buf.append(&mut others_buf);
 
-    let desc = oci.put_blob::<_, compression::Noop, media_types::Inodes>(md_buf.as_slice())?;
+    oci.put_blob::<_, compression::Noop, media_types::Inodes>(md_buf.as_slice())
+}
+
+pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Descriptor> {
+    let desc = build_delta(rootfs, oci, None)?;
     let metadatas = [BlobRef {
         offset: 0,
         kind: BlobRefKind::Other {
@@ -371,6 +468,26 @@ pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Descriptor> {
     let mut rootfs_buf = Vec::new();
     serde_cbor::to_writer(&mut rootfs_buf, &Rootfs { metadatas })?;
     oci.put_blob::<_, compression::Noop, media_types::Rootfs>(rootfs_buf.as_slice())
+}
+
+// add_rootfs_delta adds whatever the delta between the current rootfs and the puzzlefs
+// representation from the tag is.
+pub fn add_rootfs_delta(rootfs: &Path, oci: &Image, tag: &str) -> Result<()> {
+    let pfs = PuzzleFS::open(oci, tag)?;
+    let desc = build_delta(rootfs, oci, Some(pfs))?;
+    let mut rootfs = oci.open_rootfs_blob::<compression::Noop>(tag)?;
+    let br = BlobRef {
+        kind: BlobRefKind::Other {
+            digest: desc.digest.underlying(),
+        },
+        offset: 0,
+    };
+    rootfs.metadatas.insert(0, br);
+    let mut rootfs_buf = Vec::new();
+    serde_cbor::to_writer(&mut rootfs_buf, &rootfs)?;
+    let rootfs_desc =
+        oci.put_blob::<_, compression::Noop, media_types::Rootfs>(rootfs_buf.as_slice())?;
+    oci.add_tag(tag.to_string(), rootfs_desc)
 }
 
 // TODO: figure out how to guard this with #[cfg(test)]
@@ -387,6 +504,7 @@ pub mod tests {
     use tempfile::tempdir;
 
     use format::{DirList, InodeMode};
+    use reader::WalkPuzzleFS;
 
     #[test]
     fn test_fs_generation() {
@@ -447,5 +565,47 @@ pub mod tests {
         } else {
             panic!("bad inode mode: {:?}", inodes[1].mode);
         }
+    }
+
+    #[test]
+    fn test_delta_generation() {
+        let dir = tempdir().unwrap();
+        let image = Image::new(dir.path()).unwrap();
+        let rootfs_desc = build_test_fs(&image).unwrap();
+        let tag = "test".to_string();
+        image.add_tag(tag.to_string(), rootfs_desc).unwrap();
+
+        let delta_dir = dir.path().join(Path::new("delta"));
+        fs::create_dir_all(delta_dir.join(Path::new("foo"))).unwrap();
+        fs::copy(
+            Path::new("../builder/test/SekienAkashita.jpg"),
+            delta_dir.join("SekienAkashita.jpg"),
+        )
+        .unwrap();
+
+        add_rootfs_delta(&delta_dir, &image, &tag).unwrap();
+        let delta = image.open_rootfs_blob::<compression::Noop>(&tag).unwrap();
+        assert_eq!(delta.metadatas.len(), 2);
+
+        let mut pfs = PuzzleFS::open(&image, &tag).unwrap();
+        assert_eq!(pfs.max_inode().unwrap(), 3);
+        let mut walker = WalkPuzzleFS::walk(&mut pfs).unwrap();
+
+        let root = walker.next().unwrap().unwrap();
+        assert_eq!(root.path.to_string_lossy(), "/");
+        assert_eq!(root.inode.inode.ino, 1);
+        assert_eq!(root.inode.dir_entries().unwrap().len(), 2);
+
+        let jpg_file = walker.next().unwrap().unwrap();
+        assert_eq!(jpg_file.path.to_string_lossy(), "/SekienAkashita.jpg");
+        assert_eq!(jpg_file.inode.inode.ino, 2);
+        assert_eq!(jpg_file.inode.file_len().unwrap(), 109466);
+
+        let foo_dir = walker.next().unwrap().unwrap();
+        assert_eq!(foo_dir.path.to_string_lossy(), "/foo");
+        assert_eq!(foo_dir.inode.inode.ino, 3);
+        assert_eq!(foo_dir.inode.dir_entries().unwrap().len(), 0);
+
+        assert!(walker.next().is_none());
     }
 }

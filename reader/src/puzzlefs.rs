@@ -163,6 +163,10 @@ impl<'a> PuzzleFS<'a> {
     pub fn find_inode(&mut self, ino: u64) -> Result<Inode> {
         for mut layer in self.layers.iter_mut() {
             if let Some(inode) = layer.find_inode(ino)? {
+                if let format::InodeMode::Wht = inode.mode {
+                    // TODO: seems like this should really be an Option.
+                    return Err(format::WireFormatError::from_errno(Errno::ENOENT));
+                }
                 return Inode::new(&mut layer, inode);
             }
         }
