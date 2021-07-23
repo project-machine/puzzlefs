@@ -8,9 +8,11 @@ edition = "2018"
 compression = { path = "../compression" }
 format = { path = "../format" }
 oci = { path = "../oci" }
+reader = { path = "../reader" }
 walkdir = "2"
 serde_cbor = "*"
 fastcdc = "*"
+nix = "*"
 
 [dev-dependencies]
 tempfile = "*"
