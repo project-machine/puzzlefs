@@ -138,8 +138,22 @@ impl<'a> Image<'a> {
     }
 
     pub fn add_tag(&self, name: String, mut desc: Descriptor) -> Result<()> {
-        desc.set_name(name);
+        // check that the blob exists...
+        self.open_raw_blob(&desc.digest)?;
+
         let mut index = self.get_index().unwrap_or_default();
+
+        // untag anything that has this tag
+        for m in index.manifests.iter_mut() {
+            if m.get_name()
+                .map(|existing_tag| existing_tag == &name)
+                .unwrap_or(false)
+            {
+                m.remove_name()
+            }
+        }
+        desc.set_name(name);
+
         index.manifests.push(desc);
         self.put_index(&index)
     }

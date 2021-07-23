@@ -132,4 +132,8 @@ impl Descriptor {
     pub fn get_name(&self) -> Option<&String> {
         self.annotations.get(NAME_ANNOTATION)
     }
+
+    pub(crate) fn remove_name(&mut self) {
+        self.annotations.remove_entry(NAME_ANNOTATION);
+    }
 }
