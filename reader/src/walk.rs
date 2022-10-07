@@ -71,7 +71,7 @@ impl<'a> DirEntry<'a> {
 mod tests {
     extern crate xattr;
 
-    use tempfile::tempdir;
+    use tempfile::{tempdir, TempDir};
 
     use std::fs;
 
@@ -105,7 +105,7 @@ mod tests {
     #[test]
     fn test_xattrs() {
         // since walk provides us a nice API, we test some other basics of the builder here too.
-        let dir = tempdir().unwrap();
+        let dir = TempDir::new_in(".").unwrap();
         let oci_dir = dir.path().join("oci");
         let image = Image::new(&oci_dir).unwrap();
         let rootfs = dir.path().join("rootfs");
