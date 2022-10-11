@@ -220,7 +220,7 @@ mod tests {
         const FCDC_AVG: usize = 16384;
         const FCDC_MAX: usize = 32768;
 
-        fn do_fcdc(seed: u64, modifier: fn(&mut Vec<u8>), chunks: usize) -> Vec<Chunk> {
+        fn do_fcdc(seed: u64, modifier: fn(&mut [u8]), chunks: usize) -> Vec<Chunk> {
             let rng = Rng::with_seed(seed);
 
             let mut buf = vec![0_u8; chunks * FCDC_AVG];
@@ -233,7 +233,7 @@ mod tests {
 
         let original = do_fcdc(0, |_| {}, 10);
 
-        fn change_one_byte(buf: &mut Vec<u8>) {
+        fn change_one_byte(buf: &mut [u8]) {
             // change a byte in the "2nd" chunk (well, the average second chunk...)
             buf[2 * FCDC_AVG] ^= 0xff_u8;
         }
@@ -243,7 +243,7 @@ mod tests {
         // FCDC is good enough to chunk things exactly the same way with only one byte difference
         assert_eq!(original, changed_one);
 
-        fn change_kb(buf: &mut Vec<u8>) {
+        fn change_kb(buf: &mut [u8]) {
             for i in 0..1024 {
                 buf[2 * FCDC_AVG + i] ^= 0xff_u8;
             }
@@ -252,7 +252,7 @@ mod tests {
         assert_eq!(original, changed_kb);
 
         // and good enough in the face of a contiguous MIN size chunk
-        fn change_min(buf: &mut Vec<u8>) {
+        fn change_min(buf: &mut [u8]) {
             for i in 0..FCDC_MIN {
                 buf[2 * FCDC_AVG + i] ^= 0xff_u8;
             }
@@ -260,7 +260,7 @@ mod tests {
         let changed_min = do_fcdc(0, change_min, 10);
         assert_eq!(original, changed_min);
 
-        fn change_avg(buf: &mut Vec<u8>) {
+        fn change_avg(buf: &mut [u8]) {
             for i in 0..FCDC_AVG {
                 buf[2 * FCDC_AVG + i] ^= 0xff_u8;
             }

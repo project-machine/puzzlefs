@@ -191,15 +191,14 @@ fn build_delta(rootfs: &Path, oci: &Image, mut existing: Option<PuzzleFS>) -> Re
         let d = dir.map_err(io::Error::from)?;
         let dir_path = rootfs_relative(d.path());
         let existing_dirents: Vec<_> = lookup_existing(&mut existing, &dir_path)?
-            .map(|ex| -> Option<Vec<_>> {
+            .and_then(|ex| -> Option<Vec<_>> {
                 if let reader::InodeMode::Dir { entries } = ex.mode {
                     Some(entries)
                 } else {
                     None
                 }
             })
-            .flatten()
-            .unwrap_or_else(Vec::new);
+            .unwrap_or_default();
 
         let new_dirents = fs::read_dir(d.path())?.collect::<io::Result<Vec<fs::DirEntry>>>()?;
 
@@ -209,7 +208,7 @@ fn build_delta(rootfs: &Path, oci: &Image, mut existing: Option<PuzzleFS>) -> Re
             .get_mut(&this_metadata.ino())
             .ok_or_else(|| WireFormatError::from_errno(Errno::ENOENT))?;
         for (name, ino) in existing_dirents {
-            if !(&new_dirents)
+            if !(new_dirents)
                 .iter()
                 .any(|new| new.path().file_name().unwrap_or_else(|| OsStr::new("")) == name)
             {
