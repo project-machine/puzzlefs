@@ -14,7 +14,7 @@ use format::{BlobRef, BlobRefKind, WireFormatError};
 const SHA256_BLOCK_SIZE: usize = 32;
 const NAME_ANNOTATION: &str = "org.opencontainers.image.ref.name";
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Digest([u8; SHA256_BLOCK_SIZE]);
 
 impl Digest {
@@ -107,7 +107,7 @@ impl<'de> Deserialize<'de> for Digest {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Descriptor {
     pub digest: Digest,
     pub size: u64,

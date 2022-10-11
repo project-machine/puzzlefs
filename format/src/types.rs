@@ -62,7 +62,7 @@ impl Rootfs {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlobRefKind {
     Local,
     Other { digest: [u8; 32] },
@@ -71,7 +71,7 @@ pub enum BlobRefKind {
 const BLOB_REF_SIZE: usize = 1 /* mode */ + 32 /* digest */ + 8 /* offset */;
 
 // TODO: should this be an ociv1 digest and include size and media type?
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BlobRef {
     pub offset: u64,
     pub kind: BlobRefKind,
@@ -183,7 +183,7 @@ pub struct FileChunk {
 const INODE_MODE_SIZE: usize = 1 /* mode */ + mem::size_of::<u64>() * 2 /* major/minor/offset */;
 
 // InodeMode needs to have custom serialization because inodes must be a fixed size.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum InodeMode {
     Unknown,
     Fifo,
@@ -212,7 +212,7 @@ pub const fn cbor_size_of_list_header(size: usize) -> usize {
 
 pub const INODE_WIRE_SIZE: usize = cbor_size_of_list_header(INODE_SIZE) + INODE_SIZE;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Inode {
     pub ino: Ino,
     pub mode: InodeMode,
