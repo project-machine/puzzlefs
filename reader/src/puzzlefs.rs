@@ -76,8 +76,7 @@ impl Inode {
     pub fn symlink_target(&self) -> Result<&OsString> {
         self.additional
             .as_ref()
-            .map(|a| a.symlink_target.as_ref())
-            .flatten()
+            .and_then(|a| a.symlink_target.as_ref())
             .ok_or_else(|| WireFormatError::from_errno(Errno::ENOENT))
     }
 }
@@ -161,13 +160,13 @@ impl<'a> PuzzleFS<'a> {
     }
 
     pub fn find_inode(&mut self, ino: u64) -> Result<Inode> {
-        for mut layer in self.layers.iter_mut() {
+        for layer in self.layers.iter_mut() {
             if let Some(inode) = layer.find_inode(ino)? {
                 if let format::InodeMode::Wht = inode.mode {
                     // TODO: seems like this should really be an Option.
                     return Err(format::WireFormatError::from_errno(Errno::ENOENT));
                 }
-                return Inode::new(&mut layer, inode);
+                return Inode::new(layer, inode);
             }
         }
 
@@ -297,7 +296,7 @@ mod tests {
             2
         );
         assert!(pfs.lookup(Path::new("/notexist")).unwrap().is_none());
-        assert!(pfs.lookup(Path::new("./invalid-path")).is_err());
-        assert!(pfs.lookup(Path::new("invalid-path")).is_err());
+        pfs.lookup(Path::new("./invalid-path")).unwrap_err();
+        pfs.lookup(Path::new("invalid-path")).unwrap_err();
     }
 }
