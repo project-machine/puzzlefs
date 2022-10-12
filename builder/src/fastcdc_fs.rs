@@ -49,9 +49,7 @@ impl FastCDCWrapper {
         Self::new_with_sizes(MIN_CHUNK_SIZE, AVG_CHUNK_SIZE, MAX_CHUNK_SIZE)
     }
 
-    // we don't expose this since we don't want people to change the algo params, but we do use
-    // custom sizes in the tests.
-    fn new_with_sizes(min: usize, avg: usize, max: usize) -> Self {
+    pub fn new_with_sizes(min: usize, avg: usize, max: usize) -> Self {
         FastCDCWrapper {
             min,
             avg,
