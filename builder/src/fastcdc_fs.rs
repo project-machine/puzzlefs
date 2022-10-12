@@ -146,7 +146,7 @@ mod tests {
     #[test]
     fn test_single_write_ok() {
         // test data stolen from fastcdc-rs, which stole it from the original paper
-        let data = fs::read("test/SekienAkashita.jpg").unwrap();
+        let data = fs::read("test/test-1/SekienAkashita.jpg").unwrap();
         let min = 8192;
         let avg = 16384;
         let max = 32768;
@@ -177,7 +177,7 @@ mod tests {
 
     fn multiple_writes_size(write_size: usize) {
         // test data stolen from fastcdc-rs, which stole it from the original paper
-        let data = fs::read("test/SekienAkashita.jpg").unwrap();
+        let data = fs::read("test/test-1/SekienAkashita.jpg").unwrap();
         let min = 8192;
         let avg = 16384;
         let max = 32768;

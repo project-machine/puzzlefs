@@ -490,8 +490,8 @@ pub fn add_rootfs_delta(rootfs: &Path, oci: &Image, tag: &str) -> Result<()> {
 }
 
 // TODO: figure out how to guard this with #[cfg(test)]
-pub fn build_test_fs(image: &Image) -> Result<Descriptor> {
-    build_initial_rootfs(Path::new("../builder/test"), image)
+pub fn build_test_fs(path: &Path, image: &Image) -> Result<Descriptor> {
+    build_initial_rootfs(path, image)
 }
 
 #[cfg(test)]
@@ -514,7 +514,7 @@ pub mod tests {
         // but once all that's stabalized, we should verify the metadata hash too.
         let dir = tempdir().unwrap();
         let image = Image::new(dir.path()).unwrap();
-        let rootfs_desc = build_test_fs(&image).unwrap();
+        let rootfs_desc = build_test_fs(Path::new("../builder/test/test-1"), &image).unwrap();
         let rootfs = Rootfs::open(
             image
                 .open_compressed_blob::<compression::Noop>(&rootfs_desc.digest)
@@ -570,14 +570,14 @@ pub mod tests {
     fn test_delta_generation() {
         let dir = tempdir().unwrap();
         let image = Image::new(dir.path()).unwrap();
-        let rootfs_desc = build_test_fs(&image).unwrap();
+        let rootfs_desc = build_test_fs(Path::new("../builder/test/test-1"), &image).unwrap();
         let tag = "test".to_string();
         image.add_tag(tag.to_string(), rootfs_desc).unwrap();
 
         let delta_dir = dir.path().join(Path::new("delta"));
         fs::create_dir_all(delta_dir.join(Path::new("foo"))).unwrap();
         fs::copy(
-            Path::new("../builder/test/SekienAkashita.jpg"),
+            Path::new("../builder/test/test-1/SekienAkashita.jpg"),
             delta_dir.join("SekienAkashita.jpg"),
         )
         .unwrap();
