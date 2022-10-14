@@ -51,6 +51,7 @@ For the most part, I think this addresses things there except for two:
 
 * `format/` is the code for serializing/de-serializing the puzzlefs format
 * `builder/` is the code for building a puzzlefs image
+* `extractor/` is the code for extracting a puzzlefs image
 * `mount/` is the code for fuse mounting a puzzlefs image
 * `exe/` is the executable frontend for the above
 
