@@ -259,6 +259,8 @@ dependencies = [
  "oci",
  "reader",
  "tempfile",
+ "walkdir",
+ "xattr",
 ]
 
 [[package]]

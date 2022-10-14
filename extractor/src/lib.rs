@@ -109,3 +109,81 @@ pub fn extract_rootfs(oci_dir: &str, tag: &str, extract_dir: &str) -> anyhow::Re
     })?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use tempfile::TempDir;
+
+    use std::fs;
+
+    use builder::build_initial_rootfs;
+    use oci::Image;
+    use std::collections::HashMap;
+    use walkdir::WalkDir;
+
+    use super::*;
+
+    #[test]
+    fn test_extracted_xattrs() {
+        let dir = TempDir::new_in(".").unwrap();
+        let oci_dir = dir.path().join("oci");
+        let image = Image::new(&oci_dir).unwrap();
+        let rootfs = dir.path().join("rootfs");
+        let extract_dir = TempDir::new_in(".").unwrap();
+
+        let foo = rootfs.join("foo");
+        let bar = rootfs.join("bar");
+
+        let mut file_attributes = HashMap::<String, Vec<u8>>::new();
+        file_attributes.insert("user.meshuggah".to_string(), b"rocks".to_vec());
+        file_attributes.insert("user.nothing".to_string(), b"".to_vec());
+
+        // test directory, file types. we should probably also test "other" types, but on fifos and
+        // symlinks on linux xattrs aren't allowed, so we just punt for now. maybe when 5.8 is more
+        // prevalent, we can use mknod c 0 0?
+        fs::create_dir_all(&foo).unwrap();
+        fs::write(&bar, b"bar").unwrap();
+
+        // set some xattrs
+        for f in [&foo, &bar] {
+            for (key, val) in &file_attributes {
+                xattr::set(f, key, val).unwrap();
+                xattr::set(f, key, val).unwrap();
+            }
+        }
+
+        let rootfs_desc = build_initial_rootfs(&rootfs, &image).unwrap();
+
+        image.add_tag("test".to_string(), rootfs_desc).unwrap();
+
+        extract_rootfs(
+            oci_dir.to_str().unwrap(),
+            "test",
+            extract_dir.path().to_str().unwrap(),
+        )
+        .unwrap();
+
+        let ents = WalkDir::new(&extract_dir)
+            .contents_first(false)
+            .follow_links(false)
+            .same_file_system(true)
+            .sort_by(|a, b| a.file_name().cmp(b.file_name()))
+            .into_iter()
+            .collect::<Result<Vec<walkdir::DirEntry>, walkdir::Error>>()
+            .unwrap();
+
+        // the first directory is extract_dir, we don't check xattrs for it
+        for ent in ents.into_iter().skip(1) {
+            for (key, val) in &file_attributes {
+                let attribute = xattr::get(ent.path(), key);
+                println!(
+                    "path: {:?} key: {:?} attribute: {:?}",
+                    ent.path(),
+                    key,
+                    attribute
+                );
+                assert!(attribute.unwrap().as_ref().unwrap() == val);
+            }
+        }
+    }
+}

@@ -16,3 +16,5 @@ reader = { path = "../reader" }
 
 [dev-dependencies]
 tempfile = "*"
+xattr = "*"
+walkdir = "2"
