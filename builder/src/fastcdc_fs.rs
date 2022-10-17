@@ -49,9 +49,7 @@ impl FastCDCWrapper {
         Self::new_with_sizes(MIN_CHUNK_SIZE, AVG_CHUNK_SIZE, MAX_CHUNK_SIZE)
     }
 
-    // we don't expose this since we don't want people to change the algo params, but we do use
-    // custom sizes in the tests.
-    fn new_with_sizes(min: usize, avg: usize, max: usize) -> Self {
+    pub fn new_with_sizes(min: usize, avg: usize, max: usize) -> Self {
         FastCDCWrapper {
             min,
             avg,
@@ -146,7 +144,7 @@ mod tests {
     #[test]
     fn test_single_write_ok() {
         // test data stolen from fastcdc-rs, which stole it from the original paper
-        let data = fs::read("test/SekienAkashita.jpg").unwrap();
+        let data = fs::read("test/test-1/SekienAkashita.jpg").unwrap();
         let min = 8192;
         let avg = 16384;
         let max = 32768;
@@ -177,7 +175,7 @@ mod tests {
 
     fn multiple_writes_size(write_size: usize) {
         // test data stolen from fastcdc-rs, which stole it from the original paper
-        let data = fs::read("test/SekienAkashita.jpg").unwrap();
+        let data = fs::read("test/test-1/SekienAkashita.jpg").unwrap();
         let min = 8192;
         let avg = 16384;
         let max = 32768;

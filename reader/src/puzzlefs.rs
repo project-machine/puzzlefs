@@ -261,7 +261,7 @@ mod tests {
         // make ourselves a test image
         let oci_dir = tempdir().unwrap();
         let image = Image::new(oci_dir.path()).unwrap();
-        let rootfs_desc = build_test_fs(&image).unwrap();
+        let rootfs_desc = build_test_fs(Path::new("../builder/test/test-1"), &image).unwrap();
         image.add_tag("test".to_string(), rootfs_desc).unwrap();
         let mut pfs = PuzzleFS::open(&image, "test").unwrap();
 
@@ -282,7 +282,7 @@ mod tests {
     fn test_path_lookup() {
         let oci_dir = tempdir().unwrap();
         let image = Image::new(oci_dir.path()).unwrap();
-        let rootfs_desc = build_test_fs(&image).unwrap();
+        let rootfs_desc = build_test_fs(Path::new("../builder/test/test-1"), &image).unwrap();
         image.add_tag("test".to_string(), rootfs_desc).unwrap();
         let mut pfs = PuzzleFS::open(&image, "test").unwrap();
 
