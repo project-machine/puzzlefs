@@ -2,11 +2,15 @@
 extern crate anyhow;
 
 use nix::sys::stat::{makedev, mknod, Mode, SFlag};
-use nix::unistd::{mkfifo, symlinkat};
+use nix::unistd::{chown, mkfifo, symlinkat, Gid, Uid};
 use oci::Image;
 use reader::{InodeMode, PuzzleFS, WalkPuzzleFS};
 use std::path::{Component, Path, PathBuf};
 use std::{fs, io};
+
+fn runs_privileged() -> bool {
+    Uid::effective().is_root()
+}
 
 fn safe_path(dir: &Path, image_path: &Path) -> anyhow::Result<PathBuf> {
     // need to be a bit careful here about paths in the case of malicious images so we don't write
@@ -110,6 +114,15 @@ pub fn extract_rootfs(oci_dir: &str, tag: &str, extract_dir: &str) -> anyhow::Re
                 xattr::set(&path, &x.key, &x.val)?;
             }
         }
+
+        if runs_privileged() {
+            chown(
+                &path,
+                Some(Uid::from_raw(dir_entry.inode.inode.uid)),
+                Some(Gid::from_raw(dir_entry.inode.inode.gid)),
+            )?;
+        }
+
         Ok(())
     })?;
     Ok(())
