@@ -73,10 +73,10 @@ pub fn extract_rootfs(oci_dir: &str, tag: &str, extract_dir: &str) -> anyhow::Re
         match dir_entry.inode.mode {
             InodeMode::File { .. } => {
                 let mut reader = dir_entry.open()?;
-                let mut f = fs::File::create(path)?;
+                let mut f = fs::File::create(&path)?;
                 io::copy(&mut reader, &mut f)?;
             }
-            InodeMode::Dir { .. } => fs::create_dir_all(path)?,
+            InodeMode::Dir { .. } => fs::create_dir_all(&path)?,
             InodeMode::Other => {
                 match dir_entry.inode.inode.mode {
                     // TODO: fix all the hard coded modes when we have modes
@@ -103,6 +103,11 @@ pub fn extract_rootfs(oci_dir: &str, tag: &str, extract_dir: &str) -> anyhow::Re
                         bail!("bad inode mode {:#?}", dir_entry.inode.inode.mode)
                     }
                 }
+            }
+        }
+        if let Some(x) = dir_entry.inode.additional {
+            for x in &x.xattrs {
+                xattr::set(&path, &x.key, &x.val)?;
             }
         }
         Ok(())

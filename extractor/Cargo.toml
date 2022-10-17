@@ -9,6 +9,7 @@ edition = "2021"
 [dependencies]
 anyhow = "*"
 nix = "*"
+xattr = "*"
 format = { path = "../format" }
 builder = { path = "../builder" }
 oci = { path = "../oci" }
@@ -16,5 +17,4 @@ reader = { path = "../reader" }
 
 [dev-dependencies]
 tempfile = "*"
-xattr = "*"
 walkdir = "2"
