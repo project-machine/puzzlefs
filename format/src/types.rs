@@ -572,7 +572,7 @@ impl InodeAdditional {
                 let value = xattr::get(p, &xa)?;
                 Ok(Xattr {
                     key: xa,
-                    val: value,
+                    val: value.unwrap(),
                 })
             })
             .collect()
@@ -582,7 +582,7 @@ impl InodeAdditional {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Xattr {
     pub key: OsString,
-    pub val: Option<Vec<u8>>,
+    pub val: Vec<u8>,
 }
 
 pub struct MetadataBlob {

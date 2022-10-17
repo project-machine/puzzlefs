@@ -249,6 +249,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "extractor"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "builder",
+ "format",
+ "nix",
+ "oci",
+ "reader",
+ "tempfile",
+ "walkdir",
+ "xattr",
+]
+
+[[package]]
 name = "fastcdc"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -566,6 +581,7 @@ dependencies = [
  "clap",
  "dir-diff",
  "docker_extract",
+ "extractor",
  "format",
  "nix",
  "oci",

@@ -1,22 +1,20 @@
 [package]
-name = "puzzlefs"
+name = "extractor"
 version = "0.1.0"
-authors = ["Tycho Andersen <tycho@tycho.pizza>"]
-edition = "2018"
+authors = ["Ariel Miculas <amiculas@cisco.com>"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 anyhow = "*"
 nix = "*"
-clap = "3.0.0-beta.2"
+xattr = "*"
 format = { path = "../format" }
 builder = { path = "../builder" }
 oci = { path = "../oci" }
 reader = { path = "../reader" }
-extractor = { path = "../extractor" }
-signal-hook = "0.3.6"
 
 [dev-dependencies]
-docker_extract = "*"
-assert_cmd = "*"
-dir-diff = "*"
 tempfile = "*"
+walkdir = "2"
