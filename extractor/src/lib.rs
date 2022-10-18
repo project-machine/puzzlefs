@@ -130,9 +130,10 @@ pub fn extract_rootfs(oci_dir: &str, tag: &str, extract_dir: &str) -> anyhow::Re
 
 #[cfg(test)]
 mod tests {
-    use tempfile::TempDir;
+    use tempfile::{tempdir, TempDir};
 
     use std::fs;
+    use std::fs::File;
 
     use builder::build_initial_rootfs;
     use oci::Image;
@@ -203,5 +204,39 @@ mod tests {
                 assert!(attribute.unwrap().as_ref().unwrap() == val);
             }
         }
+    }
+
+    #[test]
+    fn test_permissions() {
+        let dir = tempdir().unwrap();
+        let oci_dir = dir.path().join("oci");
+        let image = Image::new(&oci_dir).unwrap();
+        let rootfs = dir.path().join("rootfs");
+        let extract_dir = tempdir().unwrap();
+        const TESTED_PERMISSION: u32 = 0o7777;
+
+        let foo = rootfs.join("foo");
+
+        fs::create_dir_all(&rootfs).unwrap();
+        fs::write(&foo, b"foo").unwrap();
+
+        std::fs::set_permissions(foo, Permissions::from_mode(TESTED_PERMISSION)).unwrap();
+
+        let rootfs_desc = build_initial_rootfs(&rootfs, &image).unwrap();
+
+        image.add_tag("test".to_string(), rootfs_desc).unwrap();
+
+        extract_rootfs(
+            oci_dir.to_str().unwrap(),
+            "test",
+            extract_dir.path().to_str().unwrap(),
+        )
+        .unwrap();
+
+        let extracted_path = extract_dir.path().join("foo");
+        let f = File::open(&extracted_path).unwrap();
+        let metadata = f.metadata().unwrap();
+
+        assert_eq!(metadata.permissions().mode() & 0xFFF, TESTED_PERMISSION);
     }
 }
