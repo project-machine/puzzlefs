@@ -5,6 +5,7 @@ use nix::sys::stat::{makedev, mknod, Mode, SFlag};
 use nix::unistd::{chown, mkfifo, symlinkat, Gid, Uid};
 use oci::Image;
 use reader::{InodeMode, PuzzleFS, WalkPuzzleFS};
+use std::collections::HashMap;
 use std::fs::Permissions;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
@@ -71,12 +72,20 @@ pub fn extract_rootfs(oci_dir: &str, tag: &str, extract_dir: &str) -> anyhow::Re
     fs::create_dir_all(dir)?;
     let mut pfs = PuzzleFS::open(&image, tag)?;
     let mut walker = WalkPuzzleFS::walk(&mut pfs)?;
+    let mut host_to_pfs = HashMap::<format::Ino, PathBuf>::new();
+
     walker.try_for_each(|de| -> anyhow::Result<()> {
         let dir_entry = de?;
         let path = safe_path(dir, &dir_entry.path)?;
         let mut is_symlink = false;
         // TODO: real logging :)
         eprintln!("extracting {:#?}", path);
+        if let Some(existing_path) = host_to_pfs.get(&dir_entry.inode.inode.ino) {
+            fs::hard_link(existing_path, &path)?;
+            return Ok(());
+        }
+        host_to_pfs.insert(dir_entry.inode.inode.ino, path.clone());
+
         match dir_entry.inode.mode {
             InodeMode::File { .. } => {
                 let mut reader = dir_entry.open()?;
