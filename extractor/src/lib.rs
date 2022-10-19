@@ -2,11 +2,17 @@
 extern crate anyhow;
 
 use nix::sys::stat::{makedev, mknod, Mode, SFlag};
-use nix::unistd::{mkfifo, symlinkat};
+use nix::unistd::{chown, mkfifo, symlinkat, Gid, Uid};
 use oci::Image;
 use reader::{InodeMode, PuzzleFS, WalkPuzzleFS};
+use std::fs::Permissions;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
 use std::{fs, io};
+
+fn runs_privileged() -> bool {
+    Uid::effective().is_root()
+}
 
 fn safe_path(dir: &Path, image_path: &Path) -> anyhow::Result<PathBuf> {
     // need to be a bit careful here about paths in the case of malicious images so we don't write
@@ -68,6 +74,7 @@ pub fn extract_rootfs(oci_dir: &str, tag: &str, extract_dir: &str) -> anyhow::Re
     walker.try_for_each(|de| -> anyhow::Result<()> {
         let dir_entry = de?;
         let path = safe_path(dir, &dir_entry.path)?;
+        let mut is_symlink = false;
         // TODO: real logging :)
         eprintln!("extracting {:#?}", path);
         match dir_entry.inode.mode {
@@ -91,6 +98,7 @@ pub fn extract_rootfs(oci_dir: &str, tag: &str, extract_dir: &str) -> anyhow::Re
                     }
                     format::InodeMode::Lnk => {
                         let target = dir_entry.inode.symlink_target()?;
+                        is_symlink = true;
                         symlinkat(target.as_os_str(), None, &path)?;
                     }
                     format::InodeMode::Sock => {
@@ -110,6 +118,24 @@ pub fn extract_rootfs(oci_dir: &str, tag: &str, extract_dir: &str) -> anyhow::Re
                 xattr::set(&path, &x.key, &x.val)?;
             }
         }
+
+        // trying to change permissions for a symlink would follow the symlink and we might not have extracted the target yet
+        // anyway, symlink permissions are not used in Linux (although they are used in macOS and FreeBSD)
+        if !is_symlink {
+            std::fs::set_permissions(
+                &path,
+                Permissions::from_mode(dir_entry.inode.inode.permissions.into()),
+            )?;
+        }
+
+        if runs_privileged() {
+            chown(
+                &path,
+                Some(Uid::from_raw(dir_entry.inode.inode.uid)),
+                Some(Gid::from_raw(dir_entry.inode.inode.gid)),
+            )?;
+        }
+
         Ok(())
     })?;
     Ok(())
@@ -117,9 +143,10 @@ pub fn extract_rootfs(oci_dir: &str, tag: &str, extract_dir: &str) -> anyhow::Re
 
 #[cfg(test)]
 mod tests {
-    use tempfile::TempDir;
+    use tempfile::{tempdir, TempDir};
 
     use std::fs;
+    use std::fs::File;
 
     use builder::build_initial_rootfs;
     use oci::Image;
@@ -190,5 +217,39 @@ mod tests {
                 assert!(attribute.unwrap().as_ref().unwrap() == val);
             }
         }
+    }
+
+    #[test]
+    fn test_permissions() {
+        let dir = tempdir().unwrap();
+        let oci_dir = dir.path().join("oci");
+        let image = Image::new(&oci_dir).unwrap();
+        let rootfs = dir.path().join("rootfs");
+        let extract_dir = tempdir().unwrap();
+        const TESTED_PERMISSION: u32 = 0o7777;
+
+        let foo = rootfs.join("foo");
+
+        fs::create_dir_all(&rootfs).unwrap();
+        fs::write(&foo, b"foo").unwrap();
+
+        std::fs::set_permissions(foo, Permissions::from_mode(TESTED_PERMISSION)).unwrap();
+
+        let rootfs_desc = build_initial_rootfs(&rootfs, &image).unwrap();
+
+        image.add_tag("test".to_string(), rootfs_desc).unwrap();
+
+        extract_rootfs(
+            oci_dir.to_str().unwrap(),
+            "test",
+            extract_dir.path().to_str().unwrap(),
+        )
+        .unwrap();
+
+        let extracted_path = extract_dir.path().join("foo");
+        let f = File::open(&extracted_path).unwrap();
+        let metadata = f.metadata().unwrap();
+
+        assert_eq!(metadata.permissions().mode() & 0xFFF, TESTED_PERMISSION);
     }
 }

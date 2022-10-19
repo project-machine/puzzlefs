@@ -8,7 +8,7 @@ use std::fs;
 use std::io;
 use std::io::{Read, Seek};
 use std::mem;
-use std::os::unix::fs::{FileTypeExt, MetadataExt};
+use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 use std::path::Path;
 use std::vec::Vec;
 
@@ -198,7 +198,8 @@ pub enum InodeMode {
 
 pub type Ino = u64;
 
-const INODE_SIZE: usize = mem::size_of::<Ino>() + INODE_MODE_SIZE + mem::size_of::<u64>() + mem::size_of::<u64>() + 1 /* Option<BlobRef> */ + BLOB_REF_SIZE;
+const INODE_SIZE: usize = mem::size_of::<Ino>() + INODE_MODE_SIZE + 2 * mem::size_of::<u32>() /* uid and gid */
++ mem::size_of::<u16>() /* permissions */ + 1 /* Option<BlobRef> */ + BLOB_REF_SIZE;
 
 pub const fn cbor_size_of_list_header(size: usize) -> usize {
     match size {
@@ -212,12 +213,16 @@ pub const fn cbor_size_of_list_header(size: usize) -> usize {
 
 pub const INODE_WIRE_SIZE: usize = cbor_size_of_list_header(INODE_SIZE) + INODE_SIZE;
 
+pub const DEFAULT_FILE_PERMISSIONS: u16 = 0o644;
+pub const DEFAULT_DIRECTORY_PERMISSIONS: u16 = 0o755;
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct Inode {
     pub ino: Ino,
     pub mode: InodeMode,
     pub uid: u32,
     pub gid: u32,
+    pub permissions: u16,
     pub additional: Option<BlobRef>,
 }
 
@@ -259,12 +264,13 @@ impl Serialize for Inode {
 
         state[25..29].copy_from_slice(&self.uid.to_le_bytes());
         state[29..33].copy_from_slice(&self.gid.to_le_bytes());
+        state[33..35].copy_from_slice(&self.permissions.to_le_bytes());
         if let Some(additional) = self.additional {
-            state[34] = 1;
+            state[35] = 1;
             additional
-                .fixed_length_serialize((&mut state[35..35 + BLOB_REF_SIZE]).try_into().unwrap());
+                .fixed_length_serialize((&mut state[36..36 + BLOB_REF_SIZE]).try_into().unwrap());
         } else {
-            state[34] = 0;
+            state[35] = 0;
         }
         serializer.serialize_bytes(&state)
     }
@@ -324,9 +330,9 @@ impl<'de> Deserialize<'de> for Inode {
                     }
                 };
 
-                let additional = if state[34] > 0 {
+                let additional = if state[35] > 0 {
                     Some(BlobRef::fixed_length_deserialize(
-                        state[35..35 + BLOB_REF_SIZE].try_into().unwrap(),
+                        state[36..36 + BLOB_REF_SIZE].try_into().unwrap(),
                     )?)
                 } else {
                     None
@@ -339,6 +345,7 @@ impl<'de> Deserialize<'de> for Inode {
                     mode,
                     uid: u32::from_le_bytes(state[25..29].try_into().unwrap()),
                     gid: u32::from_le_bytes(state[29..33].try_into().unwrap()),
+                    permissions: u16::from_le_bytes(state[33..35].try_into().unwrap()),
                     additional,
                 })
             }
@@ -422,6 +429,7 @@ impl Inode {
             mode: InodeMode::Wht,
             uid: 0,
             gid: 0,
+            permissions: DEFAULT_FILE_PERMISSIONS,
             additional: None,
         }
     }
@@ -437,6 +445,8 @@ impl Inode {
             mode,
             uid: md.uid(),
             gid: md.gid(),
+            // only preserve rwx permissions for user, group, others (9 bits) and SUID/SGID/sticky bit (3 bits)
+            permissions: (md.permissions().mode() & 0xFFF) as u16,
             additional,
         }
     }
@@ -464,6 +474,7 @@ mod tests {
                 mode: InodeMode::Unknown,
                 uid: 0,
                 gid: 0,
+                permissions: 0,
                 additional: None,
             },
             Inode {
@@ -471,6 +482,7 @@ mod tests {
                 mode: InodeMode::Lnk,
                 uid: 0,
                 gid: 0,
+                permissions: 0,
                 additional: None,
             },
             Inode {
@@ -478,6 +490,7 @@ mod tests {
                 mode: InodeMode::Reg { offset: 64 },
                 uid: 0,
                 gid: 0,
+                permissions: DEFAULT_FILE_PERMISSIONS,
                 additional: None,
             },
             Inode {
@@ -488,6 +501,7 @@ mod tests {
                 },
                 uid: 10,
                 gid: 10000,
+                permissions: DEFAULT_DIRECTORY_PERMISSIONS,
                 additional: None,
             },
             Inode {
@@ -495,6 +509,7 @@ mod tests {
                 mode: InodeMode::Lnk,
                 uid: 0,
                 gid: 0,
+                permissions: 0xFFFF,
                 additional: Some(BlobRef {
                     offset: 42,
                     kind: BlobRefKind::Local,

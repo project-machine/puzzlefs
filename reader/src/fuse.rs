@@ -59,7 +59,7 @@ impl<'a> Fuse<'a> {
             ctime: time::Timespec::new(0, 0),
             crtime: time::Timespec::new(0, 0),
             kind,
-            perm: 0o644,
+            perm: ic.inode.permissions,
             nlink: 0,
             uid: ic.inode.uid,
             gid: ic.inode.gid,
