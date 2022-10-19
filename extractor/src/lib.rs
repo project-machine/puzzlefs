@@ -151,6 +151,7 @@ mod tests {
     use builder::build_initial_rootfs;
     use oci::Image;
     use std::collections::HashMap;
+    use std::os::unix::fs::MetadataExt;
     use walkdir::WalkDir;
 
     use super::*;
@@ -251,5 +252,46 @@ mod tests {
         let metadata = f.metadata().unwrap();
 
         assert_eq!(metadata.permissions().mode() & 0xFFF, TESTED_PERMISSION);
+    }
+
+    #[test]
+    fn test_hardlink_extraction() {
+        let dir = tempdir().unwrap();
+        let oci_dir = dir.path().join("oci");
+        let image = Image::new(&oci_dir).unwrap();
+        let rootfs = dir.path().join("rootfs");
+        let extract_dir = tempdir().unwrap();
+
+        let foo = rootfs.join("foo");
+        let bar = rootfs.join("bar");
+
+        fs::create_dir_all(&rootfs).unwrap();
+        fs::write(&foo, b"foo").unwrap();
+
+        fs::hard_link(&foo, &bar).unwrap();
+
+        assert_eq!(
+            fs::metadata(&foo).unwrap().ino(),
+            fs::metadata(&bar).unwrap().ino()
+        );
+
+        let rootfs_desc = build_initial_rootfs(&rootfs, &image).unwrap();
+
+        image.add_tag("test".to_string(), rootfs_desc).unwrap();
+
+        extract_rootfs(
+            oci_dir.to_str().unwrap(),
+            "test",
+            extract_dir.path().to_str().unwrap(),
+        )
+        .unwrap();
+
+        let foo = extract_dir.path().join("foo");
+        let bar = extract_dir.path().join("bar");
+
+        assert_eq!(
+            fs::metadata(&foo).unwrap().ino(),
+            fs::metadata(&bar).unwrap().ino()
+        );
     }
 }
