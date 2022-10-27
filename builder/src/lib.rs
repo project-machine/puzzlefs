@@ -745,4 +745,71 @@ pub mod tests {
             assert!(prev_files.is_empty());
         }
     }
+
+    fn do_vecs_match<T: PartialEq>(a: &[T], b: &[T]) -> bool {
+        if a.len() != b.len() {
+            return false;
+        }
+
+        let matching = a.iter().zip(b.iter()).filter(|&(a, b)| a == b).count();
+        matching == a.len()
+    }
+
+    fn is_build_reproducible(path: &Path) -> bool {
+        let dirs: [_; 10] = std::array::from_fn(|_| tempdir().unwrap());
+        let mut sha_suite = Vec::new();
+        let images = dirs
+            .iter()
+            .map(|dir| Image::new(dir.path()).unwrap())
+            .collect::<Vec<Image>>();
+
+        for (i, image) in images.iter().enumerate() {
+            build_test_fs(Path::new(path), image).unwrap();
+            let ents = WalkDir::new(image.blob_path())
+                .contents_first(false)
+                .follow_links(false)
+                .same_file_system(true)
+                .sort_by(|a, b| a.file_name().cmp(b.file_name()))
+                .into_iter()
+                .skip(1)
+                .map(|x| OsString::from(x.unwrap().path().file_stem().unwrap()))
+                .collect::<Vec<OsString>>();
+            sha_suite.push(ents);
+
+            if i != 0 && !do_vecs_match(&sha_suite[i - 1], &sha_suite[i]) {
+                println!("not matching at iteration: {}", i);
+                return false;
+            }
+        }
+
+        true
+    }
+
+    #[test]
+    fn test_reproducibility() {
+        let dir = tempdir().unwrap();
+        let oci_dir = dir.path().join("oci");
+        let image = Image::new(&oci_dir).unwrap();
+        let rootfs = dir.path().join("rootfs");
+        let subdirs = ["foo", "bar", "baz"];
+        let files = ["foo_file", "bar_file", "baz_file"];
+
+        for subdir in subdirs {
+            let path = rootfs.join(subdir);
+            fs::create_dir_all(&path).unwrap();
+        }
+
+        for file in files {
+            let path = rootfs.join(file);
+            fs::write(&path, b"some file contents").unwrap();
+        }
+
+        build_test_fs(&rootfs, &image).unwrap();
+
+        assert!(
+            is_build_reproducible(&rootfs),
+            "build not reproducible for {}",
+            rootfs.display()
+        );
+    }
 }
