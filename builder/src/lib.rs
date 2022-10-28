@@ -304,9 +304,8 @@ fn build_delta(rootfs: &Path, oci: &Image, mut existing: Option<PuzzleFS>) -> Re
                 );
             } else if md.is_file() {
                 let mut f = fs::File::open(e.path())?;
-                io::copy(&mut f, &mut fcdc)?;
+                let file_size = io::copy(&mut f, &mut fcdc)?;
 
-                let mut written_chunks = write_chunks_to_oci(oci, &mut fcdc)?;
                 let file = File {
                     ino: cur_ino,
                     md,
@@ -316,10 +315,20 @@ fn build_delta(rootfs: &Path, oci: &Image, mut existing: Option<PuzzleFS>) -> Re
                     additional,
                 };
 
-                prev_files.push_back(file);
-                // a chunk is generated when the content of the previous file(s) fill up a fixed-size buffer
-                if !written_chunks.is_empty() {
-                    merge_chunks_and_prev_files(&mut written_chunks, &mut files, &mut prev_files)?;
+                if file_size != 0 {
+                    let mut written_chunks = write_chunks_to_oci(oci, &mut fcdc)?;
+
+                    prev_files.push_back(file);
+                    // a chunk is generated when the content of the previous file(s) fill up a fixed-size buffer
+                    if !written_chunks.is_empty() {
+                        merge_chunks_and_prev_files(
+                            &mut written_chunks,
+                            &mut files,
+                            &mut prev_files,
+                        )?;
+                    }
+                } else {
+                    files.push(file);
                 }
             } else {
                 let o = Other {
