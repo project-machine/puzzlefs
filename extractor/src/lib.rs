@@ -158,6 +158,7 @@ mod tests {
     use std::fs::File;
 
     use builder::build_initial_rootfs;
+    use builder::build_test_fs;
     use oci::Image;
     use std::collections::HashMap;
     use std::os::unix::fs::MetadataExt;
@@ -302,5 +303,30 @@ mod tests {
             fs::metadata(&foo).unwrap().ino(),
             fs::metadata(&bar).unwrap().ino()
         );
+    }
+
+    #[test]
+    fn test_empty_file() {
+        let dir = tempdir().unwrap();
+        let oci_dir = dir.path().join("oci");
+        let image = Image::new(&oci_dir).unwrap();
+        let rootfs = dir.path().join("rootfs");
+        let foo = rootfs.join("foo");
+        let extract_dir = tempdir().unwrap();
+
+        fs::create_dir_all(&rootfs).unwrap();
+        std::fs::File::create(foo).unwrap();
+
+        let rootfs_desc = build_test_fs(&rootfs, &image).unwrap();
+        image.add_tag("test".to_string(), rootfs_desc).unwrap();
+
+        extract_rootfs(
+            oci_dir.to_str().unwrap(),
+            "test",
+            extract_dir.path().to_str().unwrap(),
+        )
+        .unwrap();
+        let extracted_foo = extract_dir.path().join("foo");
+        assert_eq!(extracted_foo.metadata().unwrap().len(), 0);
     }
 }
