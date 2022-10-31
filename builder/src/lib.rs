@@ -365,10 +365,12 @@ fn build_delta(rootfs: &Path, oci: &Image, mut existing: Option<PuzzleFS>) -> Re
     // TODO: not render this whole thing in memory, stick it all in the same blob, etc.
     let mut dir_buf = Vec::<u8>::new();
 
+    let mut sorted_dirs = dirs.values_mut().collect::<Vec<_>>();
+    sorted_dirs.sort_by(|a, b| a.ino.cmp(&b.ino));
+
     // render dirs
     pfs_inodes.extend(
-        dirs.values_mut()
-            .collect::<Vec<_>>()
+        sorted_dirs
             .drain(..)
             .map(|d| {
                 let dir_list_offset = inodes_serial_size + dir_buf.len();
