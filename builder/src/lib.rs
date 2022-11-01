@@ -304,9 +304,8 @@ fn build_delta(rootfs: &Path, oci: &Image, mut existing: Option<PuzzleFS>) -> Re
                 );
             } else if md.is_file() {
                 let mut f = fs::File::open(e.path())?;
-                io::copy(&mut f, &mut fcdc)?;
+                let file_size = io::copy(&mut f, &mut fcdc)?;
 
-                let mut written_chunks = write_chunks_to_oci(oci, &mut fcdc)?;
                 let file = File {
                     ino: cur_ino,
                     md,
@@ -316,10 +315,20 @@ fn build_delta(rootfs: &Path, oci: &Image, mut existing: Option<PuzzleFS>) -> Re
                     additional,
                 };
 
-                prev_files.push_back(file);
-                // a chunk is generated when the content of the previous file(s) fill up a fixed-size buffer
-                if !written_chunks.is_empty() {
-                    merge_chunks_and_prev_files(&mut written_chunks, &mut files, &mut prev_files)?;
+                if file_size != 0 {
+                    let mut written_chunks = write_chunks_to_oci(oci, &mut fcdc)?;
+
+                    prev_files.push_back(file);
+                    // a chunk is generated when the content of the previous file(s) fill up a fixed-size buffer
+                    if !written_chunks.is_empty() {
+                        merge_chunks_and_prev_files(
+                            &mut written_chunks,
+                            &mut files,
+                            &mut prev_files,
+                        )?;
+                    }
+                } else {
+                    files.push(file);
                 }
             } else {
                 let o = Other {
@@ -356,10 +365,12 @@ fn build_delta(rootfs: &Path, oci: &Image, mut existing: Option<PuzzleFS>) -> Re
     // TODO: not render this whole thing in memory, stick it all in the same blob, etc.
     let mut dir_buf = Vec::<u8>::new();
 
+    let mut sorted_dirs = dirs.values_mut().collect::<Vec<_>>();
+    sorted_dirs.sort_by(|a, b| a.ino.cmp(&b.ino));
+
     // render dirs
     pfs_inodes.extend(
-        dirs.values_mut()
-            .collect::<Vec<_>>()
+        sorted_dirs
             .drain(..)
             .map(|d| {
                 let dir_list_offset = inodes_serial_size + dir_buf.len();
@@ -735,5 +746,72 @@ pub mod tests {
             assert!(written_chunks.is_empty());
             assert!(prev_files.is_empty());
         }
+    }
+
+    fn do_vecs_match<T: PartialEq>(a: &[T], b: &[T]) -> bool {
+        if a.len() != b.len() {
+            return false;
+        }
+
+        let matching = a.iter().zip(b.iter()).filter(|&(a, b)| a == b).count();
+        matching == a.len()
+    }
+
+    fn is_build_reproducible(path: &Path) -> bool {
+        let dirs: [_; 10] = std::array::from_fn(|_| tempdir().unwrap());
+        let mut sha_suite = Vec::new();
+        let images = dirs
+            .iter()
+            .map(|dir| Image::new(dir.path()).unwrap())
+            .collect::<Vec<Image>>();
+
+        for (i, image) in images.iter().enumerate() {
+            build_test_fs(Path::new(path), image).unwrap();
+            let ents = WalkDir::new(image.blob_path())
+                .contents_first(false)
+                .follow_links(false)
+                .same_file_system(true)
+                .sort_by(|a, b| a.file_name().cmp(b.file_name()))
+                .into_iter()
+                .skip(1)
+                .map(|x| OsString::from(x.unwrap().path().file_stem().unwrap()))
+                .collect::<Vec<OsString>>();
+            sha_suite.push(ents);
+
+            if i != 0 && !do_vecs_match(&sha_suite[i - 1], &sha_suite[i]) {
+                println!("not matching at iteration: {}", i);
+                return false;
+            }
+        }
+
+        true
+    }
+
+    #[test]
+    fn test_reproducibility() {
+        let dir = tempdir().unwrap();
+        let oci_dir = dir.path().join("oci");
+        let image = Image::new(&oci_dir).unwrap();
+        let rootfs = dir.path().join("rootfs");
+        let subdirs = ["foo", "bar", "baz"];
+        let files = ["foo_file", "bar_file", "baz_file"];
+
+        for subdir in subdirs {
+            let path = rootfs.join(subdir);
+            fs::create_dir_all(&path).unwrap();
+        }
+
+        for file in files {
+            let path = rootfs.join(file);
+            fs::write(&path, b"some file contents").unwrap();
+        }
+
+        build_test_fs(&rootfs, &image).unwrap();
+
+        assert!(
+            is_build_reproducible(&rootfs),
+            "build not reproducible for {}",
+            rootfs.display()
+        );
     }
 }
