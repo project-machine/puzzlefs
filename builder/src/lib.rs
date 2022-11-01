@@ -212,7 +212,9 @@ fn build_delta(rootfs: &Path, oci: &Image, mut existing: Option<PuzzleFS>) -> Re
             })
             .unwrap_or_default();
 
-        let new_dirents = fs::read_dir(d.path())?.collect::<io::Result<Vec<fs::DirEntry>>>()?;
+        let mut new_dirents = fs::read_dir(d.path())?.collect::<io::Result<Vec<fs::DirEntry>>>()?;
+        // sort the entries so we have reproducible puzzlefs images
+        new_dirents.sort_by_key(|a| a.file_name());
 
         // add whiteout information
         let this_metadata = fs::symlink_metadata(d.path())?;
