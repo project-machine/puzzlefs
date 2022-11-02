@@ -10,8 +10,7 @@ edition = "2018"
 compression = { path = "../compression" }
 format = { path = "../format" }
 oci = { path = "../oci" }
-fuse = "*"
-time = "0.1.44"
+fuser = "0.11.1"
 nix = "*"
 
 [dev-dependencies]

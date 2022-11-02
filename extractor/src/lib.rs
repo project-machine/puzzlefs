@@ -71,7 +71,7 @@ pub fn extract_rootfs(oci_dir: &str, tag: &str, extract_dir: &str) -> anyhow::Re
     let image = Image::new(oci_dir)?;
     let dir = Path::new(extract_dir);
     fs::create_dir_all(dir)?;
-    let mut pfs = PuzzleFS::open(&image, tag)?;
+    let mut pfs = PuzzleFS::open(image, tag)?;
     let mut walker = WalkPuzzleFS::walk(&mut pfs)?;
     let mut host_to_pfs = HashMap::<format::Ino, PathBuf>::new();
 

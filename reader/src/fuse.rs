@@ -1,21 +1,22 @@
-extern crate time;
-
 use std::convert::TryInto;
 use std::ffi::OsStr;
 use std::os::raw::c_int;
 use std::path::Path;
 
-use fuse::{FileAttr, FileType, Filesystem, ReplyData, ReplyEntry, ReplyOpen, Request};
+use fuser::{
+    FileAttr, FileType, Filesystem, KernelConfig, ReplyData, ReplyEntry, ReplyOpen, Request,
+    TimeOrNow,
+};
 use nix::errno::Errno;
 use nix::fcntl::OFlag;
-use time::Timespec;
+use std::time::{Duration, SystemTime};
 
 use format::{Result, WireFormatError};
 
 use super::puzzlefs::{file_read, Inode, InodeMode, PuzzleFS};
 
-pub struct Fuse<'a> {
-    pfs: PuzzleFS<'a>,
+pub struct Fuse {
+    pfs: PuzzleFS,
     sender: Option<std::sync::mpsc::Sender<()>>,
     // TODO: LRU cache inodes or something. I had problems fiddling with the borrow checker for the
     // cache, so for now we just do each lookup every time.
@@ -36,8 +37,8 @@ fn mode_to_fuse_type(inode: &Inode) -> Result<FileType> {
     })
 }
 
-impl<'a> Fuse<'a> {
-    pub fn new(pfs: PuzzleFS<'a>, sender: Option<std::sync::mpsc::Sender<()>>) -> Fuse<'a> {
+impl Fuse {
+    pub fn new(pfs: PuzzleFS, sender: Option<std::sync::mpsc::Sender<()>>) -> Fuse {
         Fuse { pfs, sender }
     }
 
@@ -55,41 +56,42 @@ impl<'a> Fuse<'a> {
             ino: ic.inode.ino,
             size: len,
             blocks: 0,
-            atime: time::Timespec::new(0, 0),
-            mtime: time::Timespec::new(0, 0),
-            ctime: time::Timespec::new(0, 0),
-            crtime: time::Timespec::new(0, 0),
+            atime: SystemTime::UNIX_EPOCH,
+            mtime: SystemTime::UNIX_EPOCH,
+            ctime: SystemTime::UNIX_EPOCH,
+            crtime: SystemTime::UNIX_EPOCH,
             kind,
             perm: ic.inode.permissions,
             nlink: 0,
             uid: ic.inode.uid,
             gid: ic.inode.gid,
             rdev: 0,
+            blksize: 0,
             flags: 0,
         })
     }
 
-    fn _open(&self, flags_i: u32, reply: ReplyOpen) {
+    fn _open(&self, flags_i: i32, reply: ReplyOpen) {
         let allowed_flags =
             OFlag::O_RDONLY | OFlag::O_PATH | OFlag::O_NONBLOCK | OFlag::O_DIRECTORY;
-        let flags = OFlag::from_bits_truncate(flags_i.try_into().unwrap());
+        let flags = OFlag::from_bits_truncate(flags_i);
         if !allowed_flags.contains(flags) {
             reply.error(Errno::EROFS as i32)
         } else {
             // stateless open for now, slower maybe
-            reply.opened(0, flags_i);
+            reply.opened(0, flags_i.try_into().unwrap());
         }
     }
 
     fn _read(&mut self, ino: u64, offset: u64, size: u32) -> Result<Vec<u8>> {
         let inode = self.pfs.find_inode(ino)?;
         let mut buf = vec![0_u8; size as usize];
-        let read = file_read(self.pfs.oci, &inode, offset as usize, &mut buf)?;
+        let read = file_read(&self.pfs.oci, &inode, offset as usize, &mut buf)?;
         buf.truncate(read);
         Ok(buf)
     }
 
-    fn _readdir(&mut self, ino: u64, offset: i64, reply: &mut fuse::ReplyDirectory) -> Result<()> {
+    fn _readdir(&mut self, ino: u64, offset: i64, reply: &mut fuser::ReplyDirectory) -> Result<()> {
         let inode = self.pfs.find_inode(ino)?;
         let entries = inode.dir_entries()?;
         for (index, (name, ino_r)) in entries.iter().enumerate().skip(offset as usize) {
@@ -107,7 +109,7 @@ impl<'a> Fuse<'a> {
     }
 }
 
-impl Drop for Fuse<'_> {
+impl Drop for Fuse {
     fn drop(&mut self) {
         // This code should be in the destroy function inside the Filesystem implementation
         // Unfortunately, destroy is not getting called: https://github.com/zargony/fuse-rs/issues/151
@@ -118,12 +120,16 @@ impl Drop for Fuse<'_> {
     }
 }
 
-impl Filesystem for Fuse<'_> {
-    fn init(&mut self, _req: &Request) -> std::result::Result<(), c_int> {
+impl Filesystem for Fuse {
+    fn init(
+        &mut self,
+        _req: &Request,
+        _config: &mut KernelConfig,
+    ) -> std::result::Result<(), c_int> {
         Ok(())
     }
 
-    fn destroy(&mut self, _req: &Request) {}
+    fn destroy(&mut self) {}
     fn forget(&mut self, _req: &Request, _ino: u64, _nlookup: u64) {}
 
     // puzzlefs is readonly, so we can ignore a bunch of requests
@@ -135,14 +141,15 @@ impl Filesystem for Fuse<'_> {
         _uid: Option<u32>,
         _gid: Option<u32>,
         _size: Option<u64>,
-        _atime: Option<Timespec>,
-        _mtime: Option<Timespec>,
+        _atime: Option<TimeOrNow>,
+        _mtime: Option<TimeOrNow>,
+        _ctime: Option<SystemTime>,
         _fh: Option<u64>,
-        _crtime: Option<Timespec>,
-        _chgtime: Option<Timespec>,
-        _bkuptime: Option<Timespec>,
+        _crtime: Option<SystemTime>,
+        _chgtime: Option<SystemTime>,
+        _bkuptime: Option<SystemTime>,
         _flags: Option<u32>,
-        reply: fuse::ReplyAttr,
+        reply: fuser::ReplyAttr,
     ) {
         reply.error(Errno::EROFS as i32)
     }
@@ -153,6 +160,7 @@ impl Filesystem for Fuse<'_> {
         _parent: u64,
         _name: &OsStr,
         _mode: u32,
+        _umask: u32,
         _rdev: u32,
         reply: ReplyEntry,
     ) {
@@ -165,16 +173,17 @@ impl Filesystem for Fuse<'_> {
         _parent: u64,
         _name: &OsStr,
         _mode: u32,
+        _umask: u32,
         reply: ReplyEntry,
     ) {
         reply.error(Errno::EROFS as i32)
     }
 
-    fn unlink(&mut self, _req: &Request, _parent: u64, _name: &OsStr, reply: fuse::ReplyEmpty) {
+    fn unlink(&mut self, _req: &Request, _parent: u64, _name: &OsStr, reply: fuser::ReplyEmpty) {
         reply.error(Errno::EROFS as i32)
     }
 
-    fn rmdir(&mut self, _req: &Request, _parent: u64, _name: &OsStr, reply: fuse::ReplyEmpty) {
+    fn rmdir(&mut self, _req: &Request, _parent: u64, _name: &OsStr, reply: fuser::ReplyEmpty) {
         reply.error(Errno::EROFS as i32)
     }
 
@@ -196,7 +205,8 @@ impl Filesystem for Fuse<'_> {
         _name: &OsStr,
         _newparent: u64,
         _newname: &OsStr,
-        reply: fuse::ReplyEmpty,
+        _flags: u32,
+        reply: fuser::ReplyEmpty,
     ) {
         reply.error(Errno::EROFS as i32)
     }
@@ -219,8 +229,10 @@ impl Filesystem for Fuse<'_> {
         _fh: u64,
         _offset: i64,
         _data: &[u8],
-        _flags: u32,
-        reply: fuse::ReplyWrite,
+        _write_flags: u32,
+        _flags: i32,
+        _lock_owner: Option<u64>,
+        reply: fuser::ReplyWrite,
     ) {
         reply.error(Errno::EROFS as i32)
     }
@@ -231,7 +243,7 @@ impl Filesystem for Fuse<'_> {
         _ino: u64,
         _fh: u64,
         _lock_owner: u64,
-        reply: fuse::ReplyEmpty,
+        reply: fuser::ReplyEmpty,
     ) {
         reply.error(Errno::EROFS as i32)
     }
@@ -242,7 +254,7 @@ impl Filesystem for Fuse<'_> {
         _ino: u64,
         _fh: u64,
         _datasync: bool,
-        reply: fuse::ReplyEmpty,
+        reply: fuser::ReplyEmpty,
     ) {
         reply.error(Errno::EROFS as i32)
     }
@@ -253,7 +265,7 @@ impl Filesystem for Fuse<'_> {
         _ino: u64,
         _fh: u64,
         _datasync: bool,
-        reply: fuse::ReplyEmpty,
+        reply: fuser::ReplyEmpty,
     ) {
         reply.error(Errno::EROFS as i32)
     }
@@ -264,14 +276,14 @@ impl Filesystem for Fuse<'_> {
         _ino: u64,
         _name: &OsStr,
         _value: &[u8],
-        _flags: u32,
+        _flags: i32,
         _position: u32,
-        reply: fuse::ReplyEmpty,
+        reply: fuser::ReplyEmpty,
     ) {
         reply.error(Errno::EROFS as i32)
     }
 
-    fn removexattr(&mut self, _req: &Request, _ino: u64, _name: &OsStr, reply: fuse::ReplyEmpty) {
+    fn removexattr(&mut self, _req: &Request, _ino: u64, _name: &OsStr, reply: fuser::ReplyEmpty) {
         reply.error(Errno::EROFS as i32)
     }
 
@@ -281,8 +293,9 @@ impl Filesystem for Fuse<'_> {
         _parent: u64,
         _name: &OsStr,
         _mode: u32,
-        _flags: u32,
-        reply: fuse::ReplyCreate,
+        _umask: u32,
+        _flags: i32,
+        reply: fuser::ReplyCreate,
     ) {
         reply.error(Errno::EROFS as i32)
     }
@@ -295,9 +308,9 @@ impl Filesystem for Fuse<'_> {
         _lock_owner: u64,
         _start: u64,
         _end: u64,
-        _typ: u32,
+        _typ: i32,
         _pid: u32,
-        reply: fuse::ReplyLock,
+        reply: fuser::ReplyLock,
     ) {
         reply.error(Errno::EROFS as i32)
     }
@@ -310,10 +323,10 @@ impl Filesystem for Fuse<'_> {
         _lock_owner: u64,
         _start: u64,
         _end: u64,
-        _typ: u32,
+        _typ: i32,
         _pid: u32,
         _sleep: bool,
-        reply: fuse::ReplyEmpty,
+        reply: fuser::ReplyEmpty,
     ) {
         reply.error(Errno::EROFS as i32)
     }
@@ -322,7 +335,7 @@ impl Filesystem for Fuse<'_> {
         match self._lookup(parent, name) {
             Ok(attr) => {
                 // http://libfuse.github.io/doxygen/structfuse__entry__param.html
-                let ttl = Timespec::new(std::i64::MAX, 0);
+                let ttl = Duration::new(std::u64::MAX, 0);
                 let generation = 0;
                 reply.entry(&ttl, &attr, generation)
             }
@@ -330,11 +343,11 @@ impl Filesystem for Fuse<'_> {
         }
     }
 
-    fn getattr(&mut self, _req: &Request, ino: u64, reply: fuse::ReplyAttr) {
+    fn getattr(&mut self, _req: &Request, ino: u64, reply: fuser::ReplyAttr) {
         match self._getattr(ino) {
             Ok(attr) => {
                 // http://libfuse.github.io/doxygen/structfuse__entry__param.html
-                let ttl = Timespec::new(std::i64::MAX, 0);
+                let ttl = Duration::new(std::u64::MAX, 0);
                 reply.attr(&ttl, &attr)
             }
             Err(e) => reply.error(e.to_errno()),
@@ -345,7 +358,7 @@ impl Filesystem for Fuse<'_> {
         reply.error(Errno::EISNAM as i32)
     }
 
-    fn open(&mut self, _req: &Request, _ino: u64, flags: u32, reply: ReplyOpen) {
+    fn open(&mut self, _req: &Request, _ino: u64, flags: i32, reply: ReplyOpen) {
         self._open(flags, reply)
     }
 
@@ -356,6 +369,8 @@ impl Filesystem for Fuse<'_> {
         _fh: u64,
         offset: i64,
         size: u32,
+        _flags: i32,
+        _lock_owner: Option<u64>,
         reply: ReplyData,
     ) {
         // TODO: why i64 from the fuse API here?
@@ -371,16 +386,16 @@ impl Filesystem for Fuse<'_> {
         _req: &Request,
         _ino: u64,
         _fh: u64,
-        _flags: u32,
-        _lock_owner: u64,
+        _flags: i32,
+        _lock_owner: Option<u64>,
         _flush: bool,
-        reply: fuse::ReplyEmpty,
+        reply: fuser::ReplyEmpty,
     ) {
         // TODO: purge from our cache here? dcache should save us too...
         reply.ok()
     }
 
-    fn opendir(&mut self, _req: &Request, _ino: u64, flags: u32, reply: ReplyOpen) {
+    fn opendir(&mut self, _req: &Request, _ino: u64, flags: i32, reply: ReplyOpen) {
         self._open(flags, reply)
     }
 
@@ -390,7 +405,7 @@ impl Filesystem for Fuse<'_> {
         ino: u64,
         _fh: u64,
         offset: i64,
-        mut reply: fuse::ReplyDirectory,
+        mut reply: fuser::ReplyDirectory,
     ) {
         match self._readdir(ino, offset, &mut reply) {
             Ok(_) => reply.ok(),
@@ -403,14 +418,14 @@ impl Filesystem for Fuse<'_> {
         _req: &Request,
         _ino: u64,
         _fh: u64,
-        _flags: u32,
-        reply: fuse::ReplyEmpty,
+        _flags: i32,
+        reply: fuser::ReplyEmpty,
     ) {
         // TODO: again maybe purge from cache?
         reply.ok()
     }
 
-    fn statfs(&mut self, _req: &Request, _ino: u64, reply: fuse::ReplyStatfs) {
+    fn statfs(&mut self, _req: &Request, _ino: u64, reply: fuser::ReplyStatfs) {
         reply.statfs(
             0,   // blocks
             0,   // bfree
@@ -429,17 +444,17 @@ impl Filesystem for Fuse<'_> {
         _ino: u64,
         _name: &OsStr,
         _size: u32,
-        reply: fuse::ReplyXattr,
+        reply: fuser::ReplyXattr,
     ) {
         // TODO: encoding for xattrs
         reply.error(Errno::ENOMEDIUM as i32)
     }
 
-    fn listxattr(&mut self, _req: &Request, _ino: u64, _size: u32, reply: fuse::ReplyXattr) {
+    fn listxattr(&mut self, _req: &Request, _ino: u64, _size: u32, reply: fuser::ReplyXattr) {
         reply.error(Errno::EDQUOT as i32)
     }
 
-    fn access(&mut self, _req: &Request, _ino: u64, _mask: u32, reply: fuse::ReplyEmpty) {
+    fn access(&mut self, _req: &Request, _ino: u64, _mask: i32, reply: fuser::ReplyEmpty) {
         reply.ok()
     }
 
@@ -449,7 +464,7 @@ impl Filesystem for Fuse<'_> {
         _ino: u64,
         _blocksize: u32,
         _idx: u64,
-        reply: fuse::ReplyBmap,
+        reply: fuser::ReplyBmap,
     ) {
         reply.error(Errno::ENOLCK as i32)
     }
@@ -475,7 +490,7 @@ mod tests {
         let rootfs_desc = build_test_fs(Path::new("../builder/test/test-1"), &image).unwrap();
         image.add_tag("test".to_string(), rootfs_desc).unwrap();
         let mountpoint = tempdir().unwrap();
-        let _bg = crate::spawn_mount(&image, "test", Path::new(mountpoint.path()), None).unwrap();
+        let _bg = crate::spawn_mount(image, "test", Path::new(mountpoint.path()), None).unwrap();
         let ents = fs::read_dir(mountpoint.path())
             .unwrap()
             .collect::<io::Result<Vec<fs::DirEntry>>>()

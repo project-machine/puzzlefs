@@ -3,6 +3,7 @@ use std::convert::TryFrom;
 use std::ffi::{OsStr, OsString};
 use std::io;
 use std::path::{Component, Path};
+use std::sync::Arc;
 
 use nix::errno::Errno;
 
@@ -139,13 +140,13 @@ pub(crate) fn file_read(
     Ok(buf_offset)
 }
 
-pub struct PuzzleFS<'a> {
-    pub(crate) oci: &'a Image<'a>,
+pub struct PuzzleFS {
+    pub oci: Arc<Image>,
     layers: Vec<format::MetadataBlob>,
 }
 
-impl<'a> PuzzleFS<'a> {
-    pub fn open(oci: &'a Image, tag: &str) -> format::Result<PuzzleFS<'a>> {
+impl PuzzleFS {
+    pub fn open(oci: Image, tag: &str) -> format::Result<PuzzleFS> {
         let rootfs = oci.open_rootfs_blob::<compression::Noop>(tag)?;
         let layers = rootfs
             .metadatas
@@ -156,7 +157,10 @@ impl<'a> PuzzleFS<'a> {
                     .map_err(|e| e.into())
             })
             .collect::<format::Result<Vec<MetadataBlob>>>()?;
-        Ok(PuzzleFS { oci, layers })
+        Ok(PuzzleFS {
+            oci: Arc::new(oci),
+            layers,
+        })
     }
 
     pub fn find_inode(&mut self, ino: u64) -> Result<Inode> {
@@ -214,14 +218,14 @@ impl<'a> PuzzleFS<'a> {
 }
 
 pub struct FileReader<'a> {
-    oci: &'a Image<'a>,
+    oci: &'a Image,
     inode: &'a Inode,
     offset: usize,
     len: usize,
 }
 
 impl<'a> FileReader<'a> {
-    pub fn new(oci: &'a Image<'a>, inode: &'a Inode) -> Result<FileReader<'a>> {
+    pub fn new(oci: &'a Image, inode: &'a Inode) -> Result<FileReader<'a>> {
         let len = inode.file_len()? as usize;
         Ok(FileReader {
             oci,
@@ -263,10 +267,10 @@ mod tests {
         let image = Image::new(oci_dir.path()).unwrap();
         let rootfs_desc = build_test_fs(Path::new("../builder/test/test-1"), &image).unwrap();
         image.add_tag("test".to_string(), rootfs_desc).unwrap();
-        let mut pfs = PuzzleFS::open(&image, "test").unwrap();
+        let mut pfs = PuzzleFS::open(image, "test").unwrap();
 
         let inode = pfs.find_inode(2).unwrap();
-        let mut reader = FileReader::new(&image, &inode).unwrap();
+        let mut reader = FileReader::new(&pfs.oci, &inode).unwrap();
         let mut hasher = Sha256::new();
 
         assert_eq!(io::copy(&mut reader, &mut hasher).unwrap(), 109466);
@@ -284,7 +288,7 @@ mod tests {
         let image = Image::new(oci_dir.path()).unwrap();
         let rootfs_desc = build_test_fs(Path::new("../builder/test/test-1"), &image).unwrap();
         image.add_tag("test".to_string(), rootfs_desc).unwrap();
-        let mut pfs = PuzzleFS::open(&image, "test").unwrap();
+        let mut pfs = PuzzleFS::open(image, "test").unwrap();
 
         assert_eq!(pfs.lookup(Path::new("/")).unwrap().unwrap().inode.ino, 1);
         assert_eq!(
