@@ -8,6 +8,7 @@ edition = "2018"
 anyhow = "*"
 nix = "*"
 clap = "3.0.0-beta.2"
+daemonize = "0.4"
 format = { path = "../format" }
 builder = { path = "../builder" }
 oci = { path = "../oci" }

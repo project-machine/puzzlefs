@@ -14,14 +14,19 @@ pub use crate::fuse::Fuse;
 mod walk;
 pub use walk::WalkPuzzleFS;
 
-pub fn mount<'a>(
+pub fn mount(image: &Image, tag: &str, mountpoint: &Path) -> Result<()> {
+    let pfs = PuzzleFS::open(image, tag)?;
+    let fuse = Fuse::new(pfs);
+    fuse_ffi::mount(fuse, &mountpoint, &[])?;
+    Ok(())
+}
+
+pub fn spawn_mount<'a>(
     image: &'a Image,
     tag: &str,
     mountpoint: &Path,
 ) -> Result<fuse_ffi::BackgroundSession<'a>> {
     let pfs = PuzzleFS::open(image, tag)?;
     let fuse = Fuse::new(pfs);
-    let session = fuse_ffi::Session::new(fuse, mountpoint, &[])?;
-    let bg = unsafe { fuse_ffi::BackgroundSession::new(session) }?;
-    Ok(bg)
+    unsafe { Ok(fuse_ffi::spawn_mount(fuse, &mountpoint, &[])?) }
 }

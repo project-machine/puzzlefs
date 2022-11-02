@@ -1,8 +1,10 @@
+use std::fs::File;
 use std::path::Path;
 
 use clap::Clap;
 
 use builder::build_initial_rootfs;
+use daemonize::Daemonize;
 use extractor::extract_rootfs;
 use oci::Image;
 use reader::mount;
@@ -53,12 +55,19 @@ fn main() -> anyhow::Result<()> {
             image.add_tag(b.tag, desc).map_err(|e| e.into())
         }
         SubCommand::Mount(m) => {
-            // TODO: add --background option?
+            // TODO: add --foreground option?
             let oci_dir = Path::new(&m.oci_dir);
             let image = Image::new(oci_dir)?;
             let mountpoint = Path::new(&m.mountpoint);
-            let _bg = mount(&image, &m.tag, mountpoint)?;
-            // we can return, which will ->drop() _bg and kill the thread.
+            let stdout = File::create("/tmp/puzzlefs.out")?;
+            let stderr = File::create("/tmp/puzzlefs.err")?;
+            let daemonize = Daemonize::new().stdout(stdout).stderr(stderr);
+
+            match daemonize.start() {
+                Ok(_) => mount(&image, &m.tag, mountpoint)?,
+                Err(e) => eprintln!("Error, {}", e),
+            }
+
             Ok(())
         }
         SubCommand::Extract(e) => extract_rootfs(&e.oci_dir, &e.tag, &e.extract_dir),
