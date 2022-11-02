@@ -1,9 +1,6 @@
 use std::path::Path;
 
 use clap::Clap;
-use signal_hook::consts::TERM_SIGNALS;
-use signal_hook::iterator::exfiltrator::SignalOnly;
-use signal_hook::iterator::SignalsInfo;
 
 use builder::build_initial_rootfs;
 use extractor::extract_rootfs;
@@ -61,10 +58,6 @@ fn main() -> anyhow::Result<()> {
             let image = Image::new(oci_dir)?;
             let mountpoint = Path::new(&m.mountpoint);
             let _bg = mount(&image, &m.tag, mountpoint)?;
-            let mut signals = SignalsInfo::<SignalOnly>::new(TERM_SIGNALS);
-            for s in &mut signals {
-                eprintln!("got signal {:?}, exiting puzzlefs fuse mount", s);
-            }
             // we can return, which will ->drop() _bg and kill the thread.
             Ok(())
         }

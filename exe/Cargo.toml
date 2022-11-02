@@ -13,7 +13,6 @@ builder = { path = "../builder" }
 oci = { path = "../oci" }
 reader = { path = "../reader" }
 extractor = { path = "../extractor" }
-signal-hook = "0.3.6"
 
 [dev-dependencies]
 docker_extract = "*"
