@@ -7,7 +7,7 @@ edition = "2018"
 [dependencies]
 anyhow = "*"
 nix = "*"
-clap = "3.0.0-beta.2"
+clap = { version = "4.0.18", features = ["derive"] }
 daemonize = "0.4"
 format = { path = "../format" }
 builder = { path = "../builder" }

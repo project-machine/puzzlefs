@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::path::Path;
 
-use clap::Clap;
+use clap::{Args, Parser, Subcommand};
 
 use builder::build_initial_rootfs;
 use daemonize::Daemonize;
@@ -9,35 +9,35 @@ use extractor::extract_rootfs;
 use oci::Image;
 use reader::mount;
 
-#[derive(Clap)]
-#[clap(version = "0.1.0", author = "Tycho Andersen <tycho@tycho.pizza>")]
+#[derive(Parser)]
+#[command(author, version, about)]
 struct Opts {
-    #[clap(subcommand)]
+    #[command(subcommand)]
     subcmd: SubCommand,
 }
 
-#[derive(Clap)]
+#[derive(Subcommand)]
 enum SubCommand {
     Build(Build),
     Mount(Mount),
     Extract(Extract),
 }
 
-#[derive(Clap)]
+#[derive(Args)]
 struct Build {
     rootfs: String,
     oci_dir: String,
     tag: String,
 }
 
-#[derive(Clap)]
+#[derive(Args)]
 struct Mount {
     oci_dir: String,
     tag: String,
     mountpoint: String,
 }
 
-#[derive(Clap)]
+#[derive(Args)]
 struct Extract {
     oci_dir: String,
     tag: String,
