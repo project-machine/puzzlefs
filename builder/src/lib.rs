@@ -212,7 +212,9 @@ fn build_delta(rootfs: &Path, oci: &Image, mut existing: Option<PuzzleFS>) -> Re
             })
             .unwrap_or_default();
 
-        let new_dirents = fs::read_dir(d.path())?.collect::<io::Result<Vec<fs::DirEntry>>>()?;
+        let mut new_dirents = fs::read_dir(d.path())?.collect::<io::Result<Vec<fs::DirEntry>>>()?;
+        // sort the entries so we have reproducible puzzlefs images
+        new_dirents.sort_by_key(|a| a.file_name());
 
         // add whiteout information
         let this_metadata = fs::symlink_metadata(d.path())?;
@@ -518,6 +520,8 @@ pub mod tests {
 
     use format::{DirList, InodeMode};
     use reader::WalkPuzzleFS;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
 
     #[test]
     fn test_fs_generation() {
@@ -757,7 +761,20 @@ pub mod tests {
         matching == a.len()
     }
 
-    fn is_build_reproducible(path: &Path) -> bool {
+    fn get_image_blobs(image: &Image) -> Vec<OsString> {
+        WalkDir::new(image.blob_path())
+            .contents_first(false)
+            .follow_links(false)
+            .same_file_system(true)
+            .sort_by(|a, b| a.file_name().cmp(b.file_name()))
+            .into_iter()
+            .skip(1)
+            .map(|x| OsString::from(x.unwrap().path().file_stem().unwrap()))
+            .collect::<Vec<OsString>>()
+    }
+
+    // given the same directory, test whether building it multiple times results in the same puzzlefs image
+    fn same_dir_reproducible(path: &Path) -> bool {
         let dirs: [_; 10] = std::array::from_fn(|_| tempdir().unwrap());
         let mut sha_suite = Vec::new();
         let images = dirs
@@ -766,16 +783,31 @@ pub mod tests {
             .collect::<Vec<Image>>();
 
         for (i, image) in images.iter().enumerate() {
-            build_test_fs(Path::new(path), image).unwrap();
-            let ents = WalkDir::new(image.blob_path())
-                .contents_first(false)
-                .follow_links(false)
-                .same_file_system(true)
-                .sort_by(|a, b| a.file_name().cmp(b.file_name()))
-                .into_iter()
-                .skip(1)
-                .map(|x| OsString::from(x.unwrap().path().file_stem().unwrap()))
-                .collect::<Vec<OsString>>();
+            build_test_fs(path, image).unwrap();
+            let ents = get_image_blobs(image);
+            sha_suite.push(ents);
+
+            if i != 0 && !do_vecs_match(&sha_suite[i - 1], &sha_suite[i]) {
+                println!("not matching at iteration: {}", i);
+                return false;
+            }
+        }
+
+        true
+    }
+
+    // given the same directory contents, test whether building them from multiple paths results in the same puzzlefs image
+    fn same_dir_contents_reproducible(path: &[PathBuf]) -> bool {
+        let dirs = path.iter().map(|_| tempdir().unwrap()).collect::<Vec<_>>();
+        let mut sha_suite = Vec::new();
+        let images = dirs
+            .iter()
+            .map(|dir| Image::new(dir.path()).unwrap())
+            .collect::<Vec<Image>>();
+
+        for (i, image) in images.iter().enumerate() {
+            build_test_fs(&path[i], image).unwrap();
+            let ents = get_image_blobs(image);
             sha_suite.push(ents);
 
             if i != 0 && !do_vecs_match(&sha_suite[i - 1], &sha_suite[i]) {
@@ -789,29 +821,47 @@ pub mod tests {
 
     #[test]
     fn test_reproducibility() {
+        fn build_dummy_fs(dir: &Path) -> PathBuf {
+            let rootfs = dir.join("rootfs");
+            let subdirs = ["foo", "bar", "baz"];
+            let files = ["foo_file", "bar_file", "baz_file"];
+
+            for subdir in subdirs {
+                let path = rootfs.join(subdir);
+                fs::create_dir_all(&path).unwrap();
+            }
+
+            for file in files {
+                let path = rootfs.join(file);
+                fs::write(&path, b"some file contents").unwrap();
+            }
+
+            rootfs
+        }
+
         let dir = tempdir().unwrap();
-        let oci_dir = dir.path().join("oci");
-        let image = Image::new(&oci_dir).unwrap();
-        let rootfs = dir.path().join("rootfs");
-        let subdirs = ["foo", "bar", "baz"];
-        let files = ["foo_file", "bar_file", "baz_file"];
-
-        for subdir in subdirs {
-            let path = rootfs.join(subdir);
-            fs::create_dir_all(&path).unwrap();
-        }
-
-        for file in files {
-            let path = rootfs.join(file);
-            fs::write(&path, b"some file contents").unwrap();
-        }
-
-        build_test_fs(&rootfs, &image).unwrap();
+        let rootfs = build_dummy_fs(dir.path());
 
         assert!(
-            is_build_reproducible(&rootfs),
+            same_dir_reproducible(&rootfs),
             "build not reproducible for {}",
             rootfs.display()
+        );
+
+        let dirs: [_; 10] = std::array::from_fn(|i| match i % 2 == 0 {
+            // if /tmp and the current dir reside on different filesystems there are better chances
+            // for read_dir (which uses readdir under the hood) to yield a different order of the files
+            true => tempdir().unwrap(),
+            false => TempDir::new_in(".").unwrap(),
+        });
+        let rootfses = dirs
+            .iter()
+            .map(|dir| build_dummy_fs(dir.path()))
+            .collect::<Vec<PathBuf>>();
+
+        assert!(
+            same_dir_contents_reproducible(&rootfses),
+            "build not reproducible"
         );
     }
 }
