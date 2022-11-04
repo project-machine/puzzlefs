@@ -16,6 +16,7 @@ use super::puzzlefs::{file_read, Inode, InodeMode, PuzzleFS};
 
 pub struct Fuse<'a> {
     pfs: PuzzleFS<'a>,
+    sender: Option<std::sync::mpsc::Sender<()>>,
     // TODO: LRU cache inodes or something. I had problems fiddling with the borrow checker for the
     // cache, so for now we just do each lookup every time.
 }
@@ -36,8 +37,8 @@ fn mode_to_fuse_type(inode: &Inode) -> Result<FileType> {
 }
 
 impl<'a> Fuse<'a> {
-    pub fn new(pfs: PuzzleFS<'a>) -> Fuse<'a> {
-        Fuse { pfs }
+    pub fn new(pfs: PuzzleFS<'a>, sender: Option<std::sync::mpsc::Sender<()>>) -> Fuse<'a> {
+        Fuse { pfs, sender }
     }
 
     fn _lookup(&mut self, parent: u64, name: &OsStr) -> Result<FileAttr> {
@@ -103,6 +104,17 @@ impl<'a> Fuse<'a> {
         }
 
         Ok(())
+    }
+}
+
+impl Drop for Fuse<'_> {
+    fn drop(&mut self) {
+        // This code should be in the destroy function inside the Filesystem implementation
+        // Unfortunately, destroy is not getting called: https://github.com/zargony/fuse-rs/issues/151
+        // This is fixed in fuser, which we're not using right now: https://github.com/cberner/fuser/issues/153
+        if let Some(sender) = &self.sender {
+            sender.send(()).unwrap();
+        }
     }
 }
 
@@ -463,7 +475,7 @@ mod tests {
         let rootfs_desc = build_test_fs(Path::new("../builder/test/test-1"), &image).unwrap();
         image.add_tag("test".to_string(), rootfs_desc).unwrap();
         let mountpoint = tempdir().unwrap();
-        let _bg = crate::spawn_mount(&image, "test", Path::new(mountpoint.path())).unwrap();
+        let _bg = crate::spawn_mount(&image, "test", Path::new(mountpoint.path()), None).unwrap();
         let ents = fs::read_dir(mountpoint.path())
             .unwrap()
             .collect::<io::Result<Vec<fs::DirEntry>>>()

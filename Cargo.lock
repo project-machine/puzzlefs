@@ -34,6 +34,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "autocfg"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d468802bab17cbc0cc575e9b053f41e72aa36bfa6b7f55e3529ffa43161b97fa"
+
+[[package]]
 name = "bitflags"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -73,7 +79,7 @@ dependencies = [
  "fastcdc",
  "fastrand",
  "format",
- "nix",
+ "nix 0.19.1",
  "oci",
  "reader",
  "serde",
@@ -150,6 +156,16 @@ name = "cpuid-bool"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8aebca1129a03dc6dc2b127edd729435bbc4a37e1d5f4d7513165089ceb02634"
+
+[[package]]
+name = "ctrlc"
+version = "3.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d91974fbbe88ec1df0c24a4f00f99583667a7e2e6272b2b92d294d81e462173"
+dependencies = [
+ "nix 0.25.0",
+ "winapi",
+]
 
 [[package]]
 name = "daemonize"
@@ -270,7 +286,7 @@ dependencies = [
  "anyhow",
  "builder",
  "format",
- "nix",
+ "nix 0.19.1",
  "oci",
  "reader",
  "tempfile",
@@ -316,7 +332,7 @@ name = "format"
 version = "0.1.0"
 dependencies = [
  "compression",
- "nix",
+ "nix 0.19.1",
  "serde",
  "serde_cbor",
  "serde_json",
@@ -420,9 +436,9 @@ checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
 
 [[package]]
 name = "libc"
-version = "0.2.82"
+version = "0.2.137"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "89203f3fba0a3795506acaad8ebce3c80c0af93f994d5a1d7a0b1eeb23271929"
+checksum = "fc7fcc620a3bff7cdd7a365be3376c97191aeaccc2a603e600951e452615bf89"
 
 [[package]]
 name = "log"
@@ -456,6 +472,18 @@ checksum = "b2ccba0cfe4fdf15982d1674c69b1fd80bad427d293849982668dfe454bd61f2"
 dependencies = [
  "bitflags",
  "cc",
+ "cfg-if",
+ "libc",
+]
+
+[[package]]
+name = "nix"
+version = "0.25.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e322c04a9e3440c327fca7b6c8a63e6890a32fa2ad689db972425f07e0d22abb"
+dependencies = [
+ "autocfg",
+ "bitflags",
  "cfg-if",
  "libc",
 ]
@@ -581,12 +609,13 @@ dependencies = [
  "assert_cmd",
  "builder",
  "clap",
+ "ctrlc",
  "daemonize",
  "dir-diff",
  "docker_extract",
  "extractor",
  "format",
- "nix",
+ "nix 0.19.1",
  "oci",
  "reader",
  "tempfile",
@@ -687,7 +716,7 @@ dependencies = [
  "format",
  "fuse",
  "hex",
- "nix",
+ "nix 0.19.1",
  "oci",
  "sha2",
  "tempfile",

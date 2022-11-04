@@ -9,6 +9,7 @@ anyhow = "*"
 nix = "*"
 clap = { version = "4.0.18", features = ["derive"] }
 daemonize = "0.4"
+ctrlc = "3.2.0"
 format = { path = "../format" }
 builder = { path = "../builder" }
 oci = { path = "../oci" }
