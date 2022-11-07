@@ -1,3 +1,4 @@
+use std::fs;
 use std::fs::File;
 use std::path::Path;
 
@@ -58,8 +59,10 @@ fn main() -> anyhow::Result<()> {
         }
         SubCommand::Mount(m) => {
             let oci_dir = Path::new(&m.oci_dir);
-            let image = Image::new(oci_dir)?;
+            let oci_dir = fs::canonicalize(oci_dir)?;
+            let image = Image::new(&oci_dir)?;
             let mountpoint = Path::new(&m.mountpoint);
+            let mountpoint = fs::canonicalize(mountpoint)?;
 
             if m.foreground {
                 let (send, recv) = std::sync::mpsc::channel();
@@ -72,7 +75,7 @@ fn main() -> anyhow::Result<()> {
                 .unwrap();
 
                 let fuse_thread_finished = send;
-                let _guard = spawn_mount(&image, &m.tag, mountpoint, Some(fuse_thread_finished))?;
+                let _guard = spawn_mount(&image, &m.tag, &mountpoint, Some(fuse_thread_finished))?;
                 // This blocks until either ctrl-c is pressed or the filesystem is unmounted
                 let () = recv.recv().unwrap();
             } else {
@@ -81,7 +84,7 @@ fn main() -> anyhow::Result<()> {
                 let daemonize = Daemonize::new().stdout(stdout).stderr(stderr);
 
                 match daemonize.start() {
-                    Ok(_) => mount(&image, &m.tag, mountpoint)?,
+                    Ok(_) => mount(&image, &m.tag, &mountpoint)?,
                     Err(e) => eprintln!("Error, {}", e),
                 }
             }
