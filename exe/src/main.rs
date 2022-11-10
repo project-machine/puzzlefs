@@ -1,44 +1,46 @@
+use std::fs;
+use std::fs::File;
 use std::path::Path;
 
-use clap::Clap;
-use signal_hook::consts::TERM_SIGNALS;
-use signal_hook::iterator::exfiltrator::SignalOnly;
-use signal_hook::iterator::SignalsInfo;
+use clap::{Args, Parser, Subcommand};
 
 use builder::build_initial_rootfs;
+use daemonize::Daemonize;
 use extractor::extract_rootfs;
 use oci::Image;
-use reader::mount;
+use reader::{mount, spawn_mount};
 
-#[derive(Clap)]
-#[clap(version = "0.1.0", author = "Tycho Andersen <tycho@tycho.pizza>")]
+#[derive(Parser)]
+#[command(author, version, about)]
 struct Opts {
-    #[clap(subcommand)]
+    #[command(subcommand)]
     subcmd: SubCommand,
 }
 
-#[derive(Clap)]
+#[derive(Subcommand)]
 enum SubCommand {
     Build(Build),
     Mount(Mount),
     Extract(Extract),
 }
 
-#[derive(Clap)]
+#[derive(Args)]
 struct Build {
     rootfs: String,
     oci_dir: String,
     tag: String,
 }
 
-#[derive(Clap)]
+#[derive(Args)]
 struct Mount {
     oci_dir: String,
     tag: String,
     mountpoint: String,
+    #[arg(short, long)]
+    foreground: bool,
 }
 
-#[derive(Clap)]
+#[derive(Args)]
 struct Extract {
     oci_dir: String,
     tag: String,
@@ -56,16 +58,37 @@ fn main() -> anyhow::Result<()> {
             image.add_tag(b.tag, desc).map_err(|e| e.into())
         }
         SubCommand::Mount(m) => {
-            // TODO: add --background option?
             let oci_dir = Path::new(&m.oci_dir);
-            let image = Image::new(oci_dir)?;
+            let oci_dir = fs::canonicalize(oci_dir)?;
+            let image = Image::new(&oci_dir)?;
             let mountpoint = Path::new(&m.mountpoint);
-            let _bg = mount(&image, &m.tag, mountpoint)?;
-            let mut signals = SignalsInfo::<SignalOnly>::new(TERM_SIGNALS);
-            for s in &mut signals {
-                eprintln!("got signal {:?}, exiting puzzlefs fuse mount", s);
+            let mountpoint = fs::canonicalize(mountpoint)?;
+
+            if m.foreground {
+                let (send, recv) = std::sync::mpsc::channel();
+                let send_ctrlc = send.clone();
+
+                ctrlc::set_handler(move || {
+                    println!("puzzlefs unmounted");
+                    send_ctrlc.send(()).unwrap();
+                })
+                .unwrap();
+
+                let fuse_thread_finished = send;
+                let _guard = spawn_mount(&image, &m.tag, &mountpoint, Some(fuse_thread_finished))?;
+                // This blocks until either ctrl-c is pressed or the filesystem is unmounted
+                let () = recv.recv().unwrap();
+            } else {
+                let stdout = File::create("/tmp/puzzlefs.out")?;
+                let stderr = File::create("/tmp/puzzlefs.err")?;
+                let daemonize = Daemonize::new().stdout(stdout).stderr(stderr);
+
+                match daemonize.start() {
+                    Ok(_) => mount(&image, &m.tag, &mountpoint)?,
+                    Err(e) => eprintln!("Error, {}", e),
+                }
             }
-            // we can return, which will ->drop() _bg and kill the thread.
+
             Ok(())
         }
         SubCommand::Extract(e) => extract_rootfs(&e.oci_dir, &e.tag, &e.extract_dir),
