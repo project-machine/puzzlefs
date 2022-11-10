@@ -21,6 +21,9 @@ use compression::{Compression, Decompressor};
 
 use crate::error::{Result, WireFormatError};
 
+mod cbor_helpers;
+use cbor_helpers::cbor_get_array_size;
+pub use cbor_helpers::cbor_size_of_list_header;
 // To get off the ground here, we just use serde and cbor for most things, except for the fixed
 // size Inode which depends being a fixed size (and cbor won't generate it that way) in the later
 // format.
@@ -200,16 +203,6 @@ pub type Ino = u64;
 
 const INODE_SIZE: usize = mem::size_of::<Ino>() + INODE_MODE_SIZE + 2 * mem::size_of::<u32>() /* uid and gid */
 + mem::size_of::<u16>() /* permissions */ + 1 /* Option<BlobRef> */ + BLOB_REF_SIZE;
-
-pub const fn cbor_size_of_list_header(size: usize) -> usize {
-    match size {
-        0..=23 => 1,
-        24..=255 => 2,
-        256..=65535 => 3,
-        65536..=4294967295 => 4,
-        _ => 8,
-    }
-}
 
 pub const INODE_WIRE_SIZE: usize = cbor_size_of_list_header(INODE_SIZE) + INODE_SIZE;
 
@@ -636,10 +629,7 @@ impl MetadataBlob {
 
     pub fn find_inode(&mut self, ino: Ino) -> Result<Option<Inode>> {
         self.f.seek(io::SeekFrom::Start(0))?;
-        // TODO: if we stick with serde and the fixed length encoding, we should not read the whole
-        // thing into memory before we binary search it...
-        let inodes = read_one::<Vec<Inode>, _>(&mut self.f)?;
-        let inode_count = inodes.len() as u64;
+        let inode_count = cbor_get_array_size(&mut self.f)?;
         let mut left = 0;
         let mut right = inode_count;
 
