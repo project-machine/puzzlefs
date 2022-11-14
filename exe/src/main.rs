@@ -6,6 +6,7 @@ use clap::{Args, Parser, Subcommand};
 
 use builder::build_initial_rootfs;
 use daemonize::Daemonize;
+use env_logger::Env;
 use extractor::extract_rootfs;
 use oci::Image;
 use reader::{mount, spawn_mount};
@@ -45,6 +46,11 @@ struct Extract {
     oci_dir: String,
     tag: String,
     extract_dir: String,
+}
+
+// set default log level when RUST_LOG environment variable is not set
+fn init_logging(log_level: &str) {
+    env_logger::Builder::from_env(Env::default().default_filter_or(log_level)).init();
 }
 
 fn main() -> anyhow::Result<()> {
@@ -91,6 +97,9 @@ fn main() -> anyhow::Result<()> {
 
             Ok(())
         }
-        SubCommand::Extract(e) => extract_rootfs(&e.oci_dir, &e.tag, &e.extract_dir),
+        SubCommand::Extract(e) => {
+            init_logging("info");
+            extract_rootfs(&e.oci_dir, &e.tag, &e.extract_dir)
+        }
     }
 }
