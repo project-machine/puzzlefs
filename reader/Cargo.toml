@@ -11,7 +11,7 @@ compression = { path = "../compression" }
 format = { path = "../format" }
 oci = { path = "../oci" }
 fuse = "*"
-time = "*"
+time = "0.1.44"
 nix = "*"
 
 [dev-dependencies]
