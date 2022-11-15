@@ -120,7 +120,7 @@ pub(crate) fn file_read(
         let left_in_buf = data.len() - buf_offset;
         let to_read = min(left_in_buf, chunk.len as usize);
 
-        let start = buf_offset as usize;
+        let start = buf_offset;
         let finish = start + to_read;
         let addl_offset = if offset > file_offset {
             offset - file_offset
@@ -136,7 +136,7 @@ pub(crate) fn file_read(
     }
 
     // discard any extra if we hit EOF
-    Ok(buf_offset as usize)
+    Ok(buf_offset)
 }
 
 pub struct PuzzleFS<'a> {

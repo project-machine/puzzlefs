@@ -1,5 +1,3 @@
-#![feature(backtrace)]
-
 extern crate hex;
 
 use std::backtrace::Backtrace;
