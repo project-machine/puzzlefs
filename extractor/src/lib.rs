@@ -1,6 +1,7 @@
 #[macro_use]
 extern crate anyhow;
 
+use log::info;
 use nix::sys::stat::{makedev, mknod, Mode, SFlag};
 use nix::unistd::{chown, mkfifo, symlinkat, Gid, Uid};
 use oci::Image;
@@ -78,8 +79,7 @@ pub fn extract_rootfs(oci_dir: &str, tag: &str, extract_dir: &str) -> anyhow::Re
         let dir_entry = de?;
         let path = safe_path(dir, &dir_entry.path)?;
         let mut is_symlink = false;
-        // TODO: real logging :)
-        eprintln!("extracting {:#?}", path);
+        info!("extracting {:#?}", path);
         if let Some(existing_path) = host_to_pfs.get(&dir_entry.inode.inode.ino) {
             fs::hard_link(existing_path, &path)?;
             return Ok(());

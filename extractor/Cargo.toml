@@ -14,6 +14,7 @@ format = { path = "../format" }
 builder = { path = "../builder" }
 oci = { path = "../oci" }
 reader = { path = "../reader" }
+log = "0.4.17"
 
 [dev-dependencies]
 tempfile = "*"

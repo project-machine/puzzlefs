@@ -8,8 +8,12 @@ edition = "2018"
 anyhow = "*"
 nix = "*"
 clap = { version = "4.0.18", features = ["derive"] }
-daemonize = "0.4"
+daemonize = { git = "https://github.com/ariel-miculas/daemonize.git" }
 ctrlc = "3.2.0"
+log = "0.4.17"
+env_logger = "0.9.3"
+syslog = "6.0.1"
+os_pipe = "1.1.1"
 format = { path = "../format" }
 builder = { path = "../builder" }
 oci = { path = "../oci" }
