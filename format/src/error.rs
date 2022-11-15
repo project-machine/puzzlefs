@@ -2,15 +2,13 @@ extern crate serde_cbor;
 extern crate serde_json;
 
 use std::backtrace::Backtrace;
-use std::error::Error;
-use std::fmt;
 use std::io;
 use std::os::raw::c_int;
 
 use nix::errno::Errno;
 use thiserror::Error;
 
-#[derive(Error)]
+#[derive(Error, Debug)]
 pub enum WireFormatError {
     #[error("cannot turn local ref into a digest")]
     LocalRefError(Backtrace),
@@ -51,17 +49,6 @@ impl WireFormatError {
             io::Error::from_raw_os_error(errno as i32),
             Backtrace::capture(),
         )
-    }
-}
-
-impl fmt::Debug for WireFormatError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::result::Result<(), fmt::Error> {
-        // This sucks, but otherwise we get astonishingly ugly stack traces. (In both cases, they
-        // get rendered twice when we do .unwrap() of an error in tests, which sucks, but...)
-        write!(f, "{}", &self)?;
-        self.backtrace()
-            .map(|b| write!(f, "\n{}", b))
-            .unwrap_or(Ok(()))
     }
 }
 
