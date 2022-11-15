@@ -159,7 +159,7 @@ fn build_delta(rootfs: &Path, oci: &Image, mut existing: Option<PuzzleFS>) -> Re
     let mut next_ino: u64 = existing
         .as_mut()
         .map(|pfs| pfs.max_inode().map(|i| i + 1))
-        .unwrap_or(Ok(2))?;
+        .unwrap_or_else(|| Ok(2))?;
 
     let mut fcdc = FastCDCWrapper::new();
     let mut prev_files = VecDeque::<File>::new();
@@ -178,7 +178,7 @@ fn build_delta(rootfs: &Path, oci: &Image, mut existing: Option<PuzzleFS>) -> Re
 
     // we specially create the "/" InodeMode::Dir object, since we will not iterate over it as a
     // child of some other directory
-    let root_metadata = fs::symlink_metadata(&rootfs)?;
+    let root_metadata = fs::symlink_metadata(rootfs)?;
     let root_additional = InodeAdditional::new(rootfs, &root_metadata)?;
     dirs.insert(
         root_metadata.ino(),
@@ -828,12 +828,12 @@ pub mod tests {
 
             for subdir in subdirs {
                 let path = rootfs.join(subdir);
-                fs::create_dir_all(&path).unwrap();
+                fs::create_dir_all(path).unwrap();
             }
 
             for file in files {
                 let path = rootfs.join(file);
-                fs::write(&path, b"some file contents").unwrap();
+                fs::write(path, b"some file contents").unwrap();
             }
 
             rootfs

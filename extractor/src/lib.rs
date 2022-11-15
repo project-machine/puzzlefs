@@ -258,7 +258,7 @@ mod tests {
         .unwrap();
 
         let extracted_path = extract_dir.path().join("foo");
-        let f = File::open(&extracted_path).unwrap();
+        let f = File::open(extracted_path).unwrap();
         let metadata = f.metadata().unwrap();
 
         assert_eq!(metadata.permissions().mode() & 0xFFF, TESTED_PERMISSION);
@@ -300,8 +300,8 @@ mod tests {
         let bar = extract_dir.path().join("bar");
 
         assert_eq!(
-            fs::metadata(&foo).unwrap().ino(),
-            fs::metadata(&bar).unwrap().ino()
+            fs::metadata(foo).unwrap().ino(),
+            fs::metadata(bar).unwrap().ino()
         );
     }
 

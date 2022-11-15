@@ -15,7 +15,7 @@ fn build_and_extract_is_noop() {
 
     // TODO: figure out a better way to do all this osstr stuff...
     let oci = dir.path().join("oci");
-    puzzlefs(&[
+    puzzlefs([
         OsStr::new("build"),
         ubuntu.as_ref(),
         oci.as_ref(),
@@ -23,7 +23,7 @@ fn build_and_extract_is_noop() {
     ]);
 
     let extracted = dir.path().join("extracted");
-    puzzlefs(&[
+    puzzlefs([
         OsStr::new("extract"),
         oci.as_os_str(),
         OsStr::new("test"),

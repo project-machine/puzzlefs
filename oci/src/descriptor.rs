@@ -27,7 +27,7 @@ impl Digest {
 
 impl fmt::Display for Digest {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", hex::encode(&self.0))
+        write!(f, "{}", hex::encode(self.0))
     }
 }
 
@@ -36,7 +36,7 @@ impl Serialize for Digest {
     where
         S: Serializer,
     {
-        let val = format!("sha256:{}", hex::encode(&self.0));
+        let val = format!("sha256:{}", hex::encode(self.0));
         serializer.serialize_str(&val)
     }
 }
