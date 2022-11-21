@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use format::Result;
 use oci::Image;
+use std::sync::Arc;
 
 use super::puzzlefs::{FileReader, Inode, InodeMode, PuzzleFS};
 
@@ -10,17 +11,17 @@ use super::puzzlefs::{FileReader, Inode, InodeMode, PuzzleFS};
 /// stored that way in a puzzlefs image so it'll be faster reading actual content if clients want
 /// to do that.
 pub struct WalkPuzzleFS<'a> {
-    pfs: &'a mut PuzzleFS<'a>,
-    q: VecDeque<DirEntry<'a>>,
+    pfs: &'a mut PuzzleFS,
+    q: VecDeque<DirEntry>,
 }
 
 impl<'a> WalkPuzzleFS<'a> {
-    pub fn walk(pfs: &'a mut PuzzleFS<'a>) -> Result<WalkPuzzleFS<'a>> {
+    pub fn walk(pfs: &'a mut PuzzleFS) -> Result<WalkPuzzleFS<'a>> {
         let mut q = VecDeque::new();
 
         let inode = pfs.find_inode(1)?; // root inode number
         let de = DirEntry {
-            oci: pfs.oci,
+            oci: Arc::clone(&pfs.oci),
             path: PathBuf::from("/"),
             inode,
         };
@@ -34,7 +35,7 @@ impl<'a> WalkPuzzleFS<'a> {
                 let inode = self.pfs.find_inode(*ino)?;
                 let path = dir.path.join(name);
                 self.q.push_back(DirEntry {
-                    oci: self.pfs.oci,
+                    oci: Arc::clone(&self.pfs.oci),
                     path,
                     inode,
                 })
@@ -46,7 +47,7 @@ impl<'a> WalkPuzzleFS<'a> {
 }
 
 impl<'a> Iterator for WalkPuzzleFS<'a> {
-    type Item = Result<DirEntry<'a>>;
+    type Item = Result<DirEntry>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let de = self.q.pop_front()?;
@@ -54,16 +55,16 @@ impl<'a> Iterator for WalkPuzzleFS<'a> {
     }
 }
 
-pub struct DirEntry<'a> {
-    oci: &'a Image<'a>,
+pub struct DirEntry {
+    oci: Arc<Image>,
     pub path: PathBuf,
     pub inode: Inode,
 }
 
-impl<'a> DirEntry<'a> {
+impl DirEntry {
     /// Opens this DirEntry if it is a file.
-    pub fn open(&'a self) -> Result<FileReader<'a>> {
-        FileReader::new(self.oci, &self.inode)
+    pub fn open(&self) -> Result<FileReader<'_>> {
+        FileReader::new(&self.oci, &self.inode)
     }
 }
 
@@ -88,7 +89,7 @@ mod tests {
         let image = Image::new(oci_dir.path()).unwrap();
         let rootfs_desc = build_test_fs(Path::new("../builder/test/test-1"), &image).unwrap();
         image.add_tag("test".to_string(), rootfs_desc).unwrap();
-        let mut pfs = PuzzleFS::open(&image, "test").unwrap();
+        let mut pfs = PuzzleFS::open(image, "test").unwrap();
 
         let mut walker = WalkPuzzleFS::walk(&mut pfs).unwrap();
 
@@ -128,7 +129,7 @@ mod tests {
         let rootfs_desc = build_initial_rootfs(&rootfs, &image).unwrap();
 
         image.add_tag("test".to_string(), rootfs_desc).unwrap();
-        let mut pfs = PuzzleFS::open(&image, "test").unwrap();
+        let mut pfs = PuzzleFS::open(image, "test").unwrap();
 
         let mut walker = WalkPuzzleFS::walk(&mut pfs).unwrap();
 

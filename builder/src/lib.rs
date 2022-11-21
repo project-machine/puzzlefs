@@ -6,6 +6,7 @@ use std::fs;
 use std::io;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
+use std::sync::Arc;
 
 use walkdir::WalkDir;
 
@@ -487,9 +488,10 @@ pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Descriptor> {
 
 // add_rootfs_delta adds whatever the delta between the current rootfs and the puzzlefs
 // representation from the tag is.
-pub fn add_rootfs_delta(rootfs: &Path, oci: &Image, tag: &str) -> Result<()> {
+pub fn add_rootfs_delta(rootfs: &Path, oci: Image, tag: &str) -> Result<()> {
     let pfs = PuzzleFS::open(oci, tag)?;
-    let desc = build_delta(rootfs, oci, Some(pfs))?;
+    let oci = Arc::clone(&pfs.oci);
+    let desc = build_delta(rootfs, &oci, Some(pfs))?;
     let mut rootfs = oci.open_rootfs_blob::<compression::Noop>(tag)?;
     let br = BlobRef {
         kind: BlobRefKind::Other {
@@ -600,11 +602,11 @@ pub mod tests {
         )
         .unwrap();
 
-        add_rootfs_delta(&delta_dir, &image, &tag).unwrap();
+        add_rootfs_delta(&delta_dir, image.clone(), &tag).unwrap();
         let delta = image.open_rootfs_blob::<compression::Noop>(&tag).unwrap();
         assert_eq!(delta.metadatas.len(), 2);
 
-        let mut pfs = PuzzleFS::open(&image, &tag).unwrap();
+        let mut pfs = PuzzleFS::open(image, &tag).unwrap();
         assert_eq!(pfs.max_inode().unwrap(), 3);
         let mut walker = WalkPuzzleFS::walk(&mut pfs).unwrap();
 

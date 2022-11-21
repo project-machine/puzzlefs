@@ -35,23 +35,26 @@ struct OCILayout {
     version: String,
 }
 
-pub struct Image<'a> {
-    oci_dir: &'a Path,
+#[derive(Clone)]
+pub struct Image {
+    oci_dir: PathBuf,
 }
 
-impl<'a> Image<'a> {
-    pub fn new(oci_dir: &'a Path) -> Result<Self> {
-        let image = Image { oci_dir };
+impl Image {
+    pub fn new(oci_dir: &Path) -> Result<Self> {
+        let image = Image {
+            oci_dir: oci_dir.to_path_buf(),
+        };
         fs::create_dir_all(image.blob_path())?;
         let layout_file = fs::File::create(oci_dir.join(IMAGE_LAYOUT_PATH))?;
         let layout = OCILayout {
             version: PUZZLEFS_IMAGE_LAYOUT_VERSION.to_string(),
         };
         serde_json::to_writer(layout_file, &layout)?;
-        Ok(Image { oci_dir })
+        Ok(image)
     }
 
-    pub fn open(oci_dir: &'a Path) -> Result<Self> {
+    pub fn open(oci_dir: &Path) -> Result<Self> {
         let layout_file = fs::File::open(oci_dir.join(IMAGE_LAYOUT_PATH))?;
         let layout = serde_json::from_reader::<_, OCILayout>(layout_file)?;
         if layout.version != PUZZLEFS_IMAGE_LAYOUT_VERSION {
@@ -60,7 +63,9 @@ impl<'a> Image<'a> {
                 Backtrace::capture(),
             ))
         } else {
-            Ok(Image { oci_dir })
+            Ok(Image {
+                oci_dir: oci_dir.to_path_buf(),
+            })
         }
     }
 
@@ -72,7 +77,7 @@ impl<'a> Image<'a> {
         &self,
         buf: R,
     ) -> Result<Descriptor> {
-        let tmp = NamedTempFile::new_in(self.oci_dir)?;
+        let tmp = NamedTempFile::new_in(&self.oci_dir)?;
         let mut compressed = C::compress(tmp.reopen()?);
         let mut hasher = Sha256::new();
 

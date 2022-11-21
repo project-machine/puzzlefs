@@ -1,4 +1,4 @@
-extern crate fuse as fuse_ffi;
+extern crate fuser as fuse_ffi;
 
 use std::path::Path;
 
@@ -14,20 +14,20 @@ pub use crate::fuse::Fuse;
 mod walk;
 pub use walk::WalkPuzzleFS;
 
-pub fn mount(image: &Image, tag: &str, mountpoint: &Path) -> Result<()> {
+pub fn mount(image: Image, tag: &str, mountpoint: &Path) -> Result<()> {
     let pfs = PuzzleFS::open(image, tag)?;
     let fuse = Fuse::new(pfs, None);
-    fuse_ffi::mount(fuse, &mountpoint, &[])?;
+    fuse_ffi::mount2(fuse, mountpoint, &[])?;
     Ok(())
 }
 
-pub fn spawn_mount<'a>(
-    image: &'a Image,
+pub fn spawn_mount(
+    image: Image,
     tag: &str,
     mountpoint: &Path,
     sender: Option<std::sync::mpsc::Sender<()>>,
-) -> Result<fuse_ffi::BackgroundSession<'a>> {
+) -> Result<fuse_ffi::BackgroundSession> {
     let pfs = PuzzleFS::open(image, tag)?;
     let fuse = Fuse::new(pfs, sender);
-    unsafe { Ok(fuse_ffi::spawn_mount(fuse, &mountpoint, &[])?) }
+    Ok(fuse_ffi::spawn_mount2(fuse, mountpoint, &[])?)
 }

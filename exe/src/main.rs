@@ -107,7 +107,7 @@ fn main() -> anyhow::Result<()> {
                 .unwrap();
 
                 let fuse_thread_finished = send;
-                let _guard = spawn_mount(&image, &m.tag, &mountpoint, Some(fuse_thread_finished))?;
+                let _guard = spawn_mount(image, &m.tag, &mountpoint, Some(fuse_thread_finished))?;
                 // This blocks until either ctrl-c is pressed or the filesystem is unmounted
                 let () = recv.recv().unwrap();
             } else {
@@ -155,7 +155,7 @@ fn main() -> anyhow::Result<()> {
 
                         let (fuse_thread_finished, recv) = std::sync::mpsc::channel();
                         let guard =
-                            spawn_mount(&image, &m.tag, &mountpoint, Some(fuse_thread_finished));
+                            spawn_mount(image, &m.tag, &mountpoint, Some(fuse_thread_finished));
                         match guard {
                             Ok(_res) => {
                                 // This blocks until the filesystem is unmounted
