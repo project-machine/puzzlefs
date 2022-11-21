@@ -1,4 +1,5 @@
 use std::convert::TryInto;
+use std::ffi::CString;
 use std::ffi::OsStr;
 use std::ffi::OsString;
 use std::os::raw::c_int;
@@ -121,6 +122,26 @@ impl Fuse {
                 .ok_or(error),
             _ => Err(error),
         }
+    }
+
+    fn _listxattr(&mut self, ino: u64) -> Result<Vec<u8>> {
+        let inode = self.pfs.find_inode(ino)?;
+        let xattr_list = inode
+            .additional
+            .map(|add| {
+                add.xattrs
+                    .iter()
+                    .flat_map(|x| {
+                        CString::new(x.key.as_bytes())
+                            .expect("xattr is a valid string")
+                            .as_bytes_with_nul()
+                            .to_vec()
+                    })
+                    .collect::<Vec<u8>>()
+            })
+            .unwrap_or_else(Vec::<u8>::new);
+
+        Ok(xattr_list)
     }
 }
 
@@ -468,8 +489,23 @@ impl Filesystem for Fuse {
         reply.error(Errno::ENOMEDIUM as i32)
     }
 
-    fn listxattr(&mut self, _req: &Request, _ino: u64, _size: u32, reply: fuser::ReplyXattr) {
-        reply.error(Errno::EDQUOT as i32)
+    fn listxattr(&mut self, _req: &Request, ino: u64, size: u32, reply: fuser::ReplyXattr) {
+        match self._listxattr(ino) {
+            Ok(xattr) => {
+                let xattr_len: u32 = xattr
+                    .len()
+                    .try_into()
+                    .expect("xattrs should not exceed u32");
+                if size == 0 {
+                    reply.size(xattr_len)
+                } else if xattr_len <= size {
+                    reply.data(&xattr)
+                } else {
+                    reply.error(Errno::ERANGE as i32)
+                }
+            }
+            Err(e) => reply.error(e.to_errno()),
+        }
     }
 
     fn access(&mut self, _req: &Request, _ino: u64, _mask: i32, reply: fuser::ReplyEmpty) {
