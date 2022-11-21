@@ -1,6 +1,8 @@
 use std::convert::TryInto;
 use std::ffi::OsStr;
+use std::ffi::OsString;
 use std::os::raw::c_int;
+use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 
 use fuser::{
@@ -106,6 +108,19 @@ impl Fuse {
         }
 
         Ok(())
+    }
+
+    fn _readlink(&mut self, ino: u64) -> Result<OsString> {
+        let inode = self.pfs.find_inode(ino)?;
+        let error = WireFormatError::from_errno(Errno::EINVAL);
+        let kind = mode_to_fuse_type(&inode)?;
+        match kind {
+            FileType::Symlink => inode
+                .additional
+                .and_then(|add| add.symlink_target)
+                .ok_or(error),
+            _ => Err(error),
+        }
     }
 }
 
@@ -354,8 +369,11 @@ impl Filesystem for Fuse {
         }
     }
 
-    fn readlink(&mut self, _req: &Request, _ino: u64, reply: ReplyData) {
-        reply.error(Errno::EISNAM as i32)
+    fn readlink(&mut self, _req: &Request, ino: u64, reply: ReplyData) {
+        match self._readlink(ino) {
+            Ok(symlink) => reply.data(symlink.as_bytes()),
+            Err(e) => reply.error(e.to_errno()),
+        }
     }
 
     fn open(&mut self, _req: &Request, _ino: u64, flags: i32, reply: ReplyOpen) {
