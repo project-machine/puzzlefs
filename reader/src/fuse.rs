@@ -143,6 +143,15 @@ impl Fuse {
 
         Ok(xattr_list)
     }
+
+    fn _getxattr(&mut self, ino: u64, name: &OsStr) -> Result<Vec<u8>> {
+        let inode = self.pfs.find_inode(ino)?;
+        inode
+            .additional
+            .and_then(|add| add.xattrs.into_iter().find(|elem| elem.key == name))
+            .map(|xattr| xattr.val)
+            .ok_or_else(|| WireFormatError::from_errno(Errno::ENODATA))
+    }
 }
 
 impl Drop for Fuse {
@@ -480,13 +489,27 @@ impl Filesystem for Fuse {
     fn getxattr(
         &mut self,
         _req: &Request,
-        _ino: u64,
-        _name: &OsStr,
-        _size: u32,
+        ino: u64,
+        name: &OsStr,
+        size: u32,
         reply: fuser::ReplyXattr,
     ) {
-        // TODO: encoding for xattrs
-        reply.error(Errno::ENOMEDIUM as i32)
+        match self._getxattr(ino, name) {
+            Ok(xattr) => {
+                let xattr_len: u32 = xattr
+                    .len()
+                    .try_into()
+                    .expect("xattrs should not exceed u32");
+                if size == 0 {
+                    reply.size(xattr_len)
+                } else if xattr_len <= size {
+                    reply.data(&xattr)
+                } else {
+                    reply.error(Errno::ERANGE as i32)
+                }
+            }
+            Err(e) => reply.error(e.to_errno()),
+        }
     }
 
     fn listxattr(&mut self, _req: &Request, ino: u64, size: u32, reply: fuser::ReplyXattr) {
