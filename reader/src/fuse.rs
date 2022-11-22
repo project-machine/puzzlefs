@@ -1,6 +1,9 @@
 use std::convert::TryInto;
+use std::ffi::CString;
 use std::ffi::OsStr;
+use std::ffi::OsString;
 use std::os::raw::c_int;
+use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 
 use fuser::{
@@ -109,6 +112,48 @@ impl Fuse {
         }
 
         Ok(())
+    }
+
+    fn _readlink(&mut self, ino: u64) -> Result<OsString> {
+        let inode = self.pfs.find_inode(ino)?;
+        let error = WireFormatError::from_errno(Errno::EINVAL);
+        let kind = mode_to_fuse_type(&inode)?;
+        match kind {
+            FileType::Symlink => inode
+                .additional
+                .and_then(|add| add.symlink_target)
+                .ok_or(error),
+            _ => Err(error),
+        }
+    }
+
+    fn _listxattr(&mut self, ino: u64) -> Result<Vec<u8>> {
+        let inode = self.pfs.find_inode(ino)?;
+        let xattr_list = inode
+            .additional
+            .map(|add| {
+                add.xattrs
+                    .iter()
+                    .flat_map(|x| {
+                        CString::new(x.key.as_bytes())
+                            .expect("xattr is a valid string")
+                            .as_bytes_with_nul()
+                            .to_vec()
+                    })
+                    .collect::<Vec<u8>>()
+            })
+            .unwrap_or_else(Vec::<u8>::new);
+
+        Ok(xattr_list)
+    }
+
+    fn _getxattr(&mut self, ino: u64, name: &OsStr) -> Result<Vec<u8>> {
+        let inode = self.pfs.find_inode(ino)?;
+        inode
+            .additional
+            .and_then(|add| add.xattrs.into_iter().find(|elem| elem.key == name))
+            .map(|xattr| xattr.val)
+            .ok_or_else(|| WireFormatError::from_errno(Errno::ENODATA))
     }
 }
 
@@ -357,8 +402,11 @@ impl Filesystem for Fuse {
         }
     }
 
-    fn readlink(&mut self, _req: &Request, _ino: u64, reply: ReplyData) {
-        reply.error(Errno::EISNAM as i32)
+    fn readlink(&mut self, _req: &Request, ino: u64, reply: ReplyData) {
+        match self._readlink(ino) {
+            Ok(symlink) => reply.data(symlink.as_bytes()),
+            Err(e) => reply.error(e.to_errno()),
+        }
     }
 
     fn open(&mut self, _req: &Request, _ino: u64, flags: i32, reply: ReplyOpen) {
@@ -444,17 +492,46 @@ impl Filesystem for Fuse {
     fn getxattr(
         &mut self,
         _req: &Request,
-        _ino: u64,
-        _name: &OsStr,
-        _size: u32,
+        ino: u64,
+        name: &OsStr,
+        size: u32,
         reply: fuser::ReplyXattr,
     ) {
-        // TODO: encoding for xattrs
-        reply.error(Errno::ENOMEDIUM as i32)
+        match self._getxattr(ino, name) {
+            Ok(xattr) => {
+                let xattr_len: u32 = xattr
+                    .len()
+                    .try_into()
+                    .expect("xattrs should not exceed u32");
+                if size == 0 {
+                    reply.size(xattr_len)
+                } else if xattr_len <= size {
+                    reply.data(&xattr)
+                } else {
+                    reply.error(Errno::ERANGE as i32)
+                }
+            }
+            Err(e) => reply.error(e.to_errno()),
+        }
     }
 
-    fn listxattr(&mut self, _req: &Request, _ino: u64, _size: u32, reply: fuser::ReplyXattr) {
-        reply.error(Errno::EDQUOT as i32)
+    fn listxattr(&mut self, _req: &Request, ino: u64, size: u32, reply: fuser::ReplyXattr) {
+        match self._listxattr(ino) {
+            Ok(xattr) => {
+                let xattr_len: u32 = xattr
+                    .len()
+                    .try_into()
+                    .expect("xattrs should not exceed u32");
+                if size == 0 {
+                    reply.size(xattr_len)
+                } else if xattr_len <= size {
+                    reply.data(&xattr)
+                } else {
+                    reply.error(Errno::ERANGE as i32)
+                }
+            }
+            Err(e) => reply.error(e.to_errno()),
+        }
     }
 
     fn access(&mut self, _req: &Request, _ino: u64, _mask: i32, reply: fuser::ReplyEmpty) {
