@@ -72,8 +72,11 @@ impl Fuse {
     }
 
     fn _open(&self, flags_i: i32, reply: ReplyOpen) {
-        let allowed_flags =
-            OFlag::O_RDONLY | OFlag::O_PATH | OFlag::O_NONBLOCK | OFlag::O_DIRECTORY;
+        let allowed_flags = OFlag::O_RDONLY
+            | OFlag::O_PATH
+            | OFlag::O_NONBLOCK
+            | OFlag::O_DIRECTORY
+            | OFlag::O_NOFOLLOW;
         let flags = OFlag::from_bits_truncate(flags_i);
         if !allowed_flags.contains(flags) {
             reply.error(Errno::EROFS as i32)
