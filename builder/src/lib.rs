@@ -488,7 +488,7 @@ pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Descriptor> {
 
 // add_rootfs_delta adds whatever the delta between the current rootfs and the puzzlefs
 // representation from the tag is.
-pub fn add_rootfs_delta(rootfs: &Path, oci: Image, tag: &str) -> Result<()> {
+pub fn add_rootfs_delta(rootfs: &Path, oci: Image, tag: &str) -> Result<Descriptor> {
     let pfs = PuzzleFS::open(oci, tag)?;
     let oci = Arc::clone(&pfs.oci);
     let desc = build_delta(rootfs, &oci, Some(pfs))?;
@@ -502,9 +502,7 @@ pub fn add_rootfs_delta(rootfs: &Path, oci: Image, tag: &str) -> Result<()> {
     rootfs.metadatas.insert(0, br);
     let mut rootfs_buf = Vec::new();
     serde_cbor::to_writer(&mut rootfs_buf, &rootfs)?;
-    let rootfs_desc =
-        oci.put_blob::<_, compression::Noop, media_types::Rootfs>(rootfs_buf.as_slice())?;
-    oci.add_tag(tag.to_string(), rootfs_desc)
+    oci.put_blob::<_, compression::Noop, media_types::Rootfs>(rootfs_buf.as_slice())
 }
 
 // TODO: figure out how to guard this with #[cfg(test)]
@@ -602,11 +600,15 @@ pub mod tests {
         )
         .unwrap();
 
-        add_rootfs_delta(&delta_dir, image.clone(), &tag).unwrap();
-        let delta = image.open_rootfs_blob::<compression::Noop>(&tag).unwrap();
+        let desc = add_rootfs_delta(&delta_dir, image.clone(), &tag).unwrap();
+        let new_tag = "test2".to_string();
+        image.add_tag(new_tag.to_string(), desc).unwrap();
+        let delta = image
+            .open_rootfs_blob::<compression::Noop>(&new_tag)
+            .unwrap();
         assert_eq!(delta.metadatas.len(), 2);
 
-        let mut pfs = PuzzleFS::open(image, &tag).unwrap();
+        let mut pfs = PuzzleFS::open(image, &new_tag).unwrap();
         assert_eq!(pfs.max_inode().unwrap(), 3);
         let mut walker = WalkPuzzleFS::walk(&mut pfs).unwrap();
 

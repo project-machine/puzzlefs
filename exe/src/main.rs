@@ -7,7 +7,7 @@ use clap::{Args, Parser, Subcommand};
 use std::os::unix::io::AsRawFd;
 use std::thread;
 
-use builder::build_initial_rootfs;
+use builder::{add_rootfs_delta, build_initial_rootfs};
 use daemonize::Daemonize;
 use env_logger::Env;
 use extractor::extract_rootfs;
@@ -35,6 +35,8 @@ struct Build {
     rootfs: String,
     oci_dir: String,
     tag: String,
+    #[arg(short, long, value_name = "base-layer")]
+    base_layer: Option<String>,
 }
 
 #[derive(Args)]
@@ -86,7 +88,10 @@ fn main() -> anyhow::Result<()> {
             let rootfs = Path::new(&b.rootfs);
             let oci_dir = Path::new(&b.oci_dir);
             let image = Image::new(oci_dir)?;
-            let desc = build_initial_rootfs(rootfs, &image)?;
+            let desc = match b.base_layer {
+                Some(base_layer) => add_rootfs_delta(rootfs, image.clone(), &base_layer)?,
+                None => build_initial_rootfs(rootfs, &image)?,
+            };
             image.add_tag(b.tag, desc).map_err(|e| e.into())
         }
         SubCommand::Mount(m) => {
