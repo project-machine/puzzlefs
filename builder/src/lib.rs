@@ -792,7 +792,7 @@ pub mod tests {
             sha_suite.push(ents);
 
             if i != 0 && !do_vecs_match(&sha_suite[i - 1], &sha_suite[i]) {
-                println!("not matching at iteration: {}", i);
+                println!("not matching at iteration: {i}");
                 return false;
             }
         }
@@ -815,7 +815,7 @@ pub mod tests {
             sha_suite.push(ents);
 
             if i != 0 && !do_vecs_match(&sha_suite[i - 1], &sha_suite[i]) {
-                println!("not matching at iteration: {}", i);
+                println!("not matching at iteration: {i}");
                 return false;
             }
         }

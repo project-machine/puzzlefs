@@ -136,7 +136,7 @@ impl<'de> Deserialize<'de> for BlobRef {
             type Value = BlobRef;
 
             fn expecting(&self, formatter: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-                formatter.write_fmt(format_args!("expected {} bytes for BlobRef", BLOB_REF_SIZE))
+                formatter.write_fmt(format_args!("expected {BLOB_REF_SIZE} bytes for BlobRef"))
             }
 
             fn visit_bytes<E>(self, v: &[u8]) -> std::result::Result<BlobRef, E>
@@ -280,7 +280,7 @@ impl<'de> Deserialize<'de> for Inode {
             type Value = Inode;
 
             fn expecting(&self, formatter: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-                formatter.write_fmt(format_args!("expected {} bytes for Inode", INODE_MODE_SIZE))
+                formatter.write_fmt(format_args!("expected {INODE_MODE_SIZE} bytes for Inode"))
             }
 
             fn visit_bytes<E>(self, v: &[u8]) -> std::result::Result<Inode, E>
@@ -358,7 +358,7 @@ impl Inode {
         if !md.is_dir() {
             return Err(io::Error::new(
                 io::ErrorKind::Other,
-                format!("{} is a dir", ino),
+                format!("{ino} is a dir"),
             ));
         }
 
@@ -375,7 +375,7 @@ impl Inode {
         if !md.is_file() {
             return Err(io::Error::new(
                 io::ErrorKind::Other,
-                format!("{} is a file", ino),
+                format!("{ino} is a file"),
             ));
         }
 
@@ -394,7 +394,7 @@ impl Inode {
         } else if file_type.is_dir() {
             return Err(io::Error::new(
                 io::ErrorKind::Other,
-                format!("{} is a dir", ino),
+                format!("{ino} is a dir"),
             ));
         } else if file_type.is_block_device() {
             let major = stat::major(md.rdev());
@@ -403,7 +403,7 @@ impl Inode {
         } else if file_type.is_file() {
             return Err(io::Error::new(
                 io::ErrorKind::Other,
-                format!("{} is a file", ino),
+                format!("{ino} is a file"),
             ));
         } else if file_type.is_symlink() {
             InodeMode::Lnk
@@ -513,7 +513,7 @@ mod tests {
         for test in testcases {
             let wire = test.to_wire().unwrap();
             let after = serde_cbor::from_reader(&*wire).unwrap();
-            assert_eq!(wire.len(), INODE_WIRE_SIZE, "{:?}", test);
+            assert_eq!(wire.len(), INODE_WIRE_SIZE, "{test:?}");
             assert_eq!(test, after);
         }
     }
@@ -628,7 +628,7 @@ impl MetadataBlob {
     }
 
     pub fn find_inode(&mut self, ino: Ino) -> Result<Option<Inode>> {
-        self.f.seek(io::SeekFrom::Start(0))?;
+        self.f.rewind()?;
         let inode_count = cbor_get_array_size(&mut self.f)?;
         let mut left = 0;
         let mut right = inode_count;
@@ -660,7 +660,7 @@ impl MetadataBlob {
     }
 
     pub fn read_inodes(&mut self) -> Result<Vec<Inode>> {
-        self.f.seek(io::SeekFrom::Start(0))?;
+        self.f.rewind()?;
         read_one(&mut self.f)
     }
 

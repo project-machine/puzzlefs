@@ -81,7 +81,7 @@ impl<'de> Deserialize<'de> for Digest {
             {
                 let parts: Vec<&str> = s.split(':').collect();
                 if parts.len() != 2 {
-                    return Err(SerdeError::custom(format!("bad digest {}", s)));
+                    return Err(SerdeError::custom(format!("bad digest {s}")));
                 }
 
                 match parts[0] {
@@ -91,7 +91,7 @@ impl<'de> Deserialize<'de> for Digest {
 
                         let len = buf.len();
                         let digest: [u8; SHA256_BLOCK_SIZE] = buf.try_into().map_err(|_| {
-                            SerdeError::custom(format!("invalid sha256 block length {}", len))
+                            SerdeError::custom(format!("invalid sha256 block length {len}"))
                         })?;
                         Ok(Digest(digest))
                     }

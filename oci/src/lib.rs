@@ -114,7 +114,7 @@ impl Image {
         let index = self.get_index()?;
         let desc = index
             .find_tag(tag)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("no tag {}", tag)))?;
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("no tag {tag}")))?;
         let rootfs = Rootfs::open(self.open_compressed_blob::<C>(&desc.digest)?)?;
         Ok(rootfs)
     }

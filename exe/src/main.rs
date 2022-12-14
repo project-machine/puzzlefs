@@ -70,7 +70,7 @@ fn init_syslog() -> std::io::Result<()> {
 
     let logger = match syslog::unix(formatter) {
         Err(e) => {
-            println!("impossible to connect to syslog: {:?}", e);
+            println!("impossible to connect to syslog: {e:?}");
             return Err(std::io::Error::last_os_error());
         }
         Ok(logger) => logger,
@@ -176,7 +176,7 @@ fn main() -> anyhow::Result<()> {
                         close(std::io::stderr().as_raw_fd()).expect("cannot close stderr");
                         thread_handle.join().expect("Cannot join thread");
                     }
-                    Err(e) => eprintln!("Error, {}", e),
+                    Err(e) => eprintln!("Error, {e}"),
                 }
             }
 

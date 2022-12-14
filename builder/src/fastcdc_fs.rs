@@ -157,8 +157,8 @@ mod tests {
         wrapper.get_pending_chunks(&mut chunks);
 
         for (i, (fcdc, ours)) in fcdc_results.iter().zip(&chunks).enumerate() {
-            assert_eq!(fcdc.offset, ours.offset, "offset {}", i);
-            assert_eq!(fcdc.length, ours.length, "length {}", i);
+            assert_eq!(fcdc.offset, ours.offset, "offset {i}");
+            assert_eq!(fcdc.length, ours.length, "length {i}");
         }
         assert_eq!(fcdc_results.len(), chunks.len(), "number of chunks");
     }
@@ -191,8 +191,8 @@ mod tests {
         wrapper.get_pending_chunks(&mut chunks);
 
         for (i, (fcdc, ours)) in fcdc_results.iter().zip(&chunks).enumerate() {
-            assert_eq!(fcdc.offset, ours.offset, "offset {}", i);
-            assert_eq!(fcdc.length, ours.length, "length {}", i);
+            assert_eq!(fcdc.offset, ours.offset, "offset {i}");
+            assert_eq!(fcdc.length, ours.length, "length {i}");
         }
         assert_eq!(fcdc_results.len(), chunks.len(), "number of chunks");
     }
