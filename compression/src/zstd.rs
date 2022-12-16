@@ -131,7 +131,7 @@ impl Compression for Zstd {
     }
 
     fn append_extension(media_type: &str) -> String {
-        format!("{}+zstd", media_type)
+        format!("{media_type}+zstd")
     }
 }
 
