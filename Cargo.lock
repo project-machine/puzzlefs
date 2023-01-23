@@ -560,6 +560,7 @@ dependencies = [
  "format",
  "hex",
  "log",
+ "openat",
  "serde",
  "serde_json",
  "sha2",
@@ -578,6 +579,15 @@ name = "opaque-debug"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "624a8340c38c1b80fd549087862da4ba43e08858af025b236e509b6649fc13d5"
+
+[[package]]
+name = "openat"
+version = "0.1.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "95aa7c05907b3ebde2610d602f4ddd992145cc6a84493647c30396f30ba83abe"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "os_pipe"
