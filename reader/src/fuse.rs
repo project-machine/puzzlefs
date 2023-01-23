@@ -1,3 +1,4 @@
+use log::{debug, warn};
 use std::convert::TryInto;
 use std::ffi::CString;
 use std::ffi::OsStr;
@@ -83,6 +84,7 @@ impl Fuse {
             | OFlag::O_NOATIME;
         let flags = OFlag::from_bits_truncate(flags_i);
         if !allowed_flags.contains(flags) {
+            warn!("invalid flags {flags:?}, only allowed {allowed_flags:?}");
             reply.error(Errno::EROFS as i32)
         } else {
             // stateless open for now, slower maybe
@@ -200,6 +202,7 @@ impl Filesystem for Fuse {
         _flags: Option<u32>,
         reply: fuser::ReplyAttr,
     ) {
+        debug!("setattr not supported!");
         reply.error(Errno::EROFS as i32)
     }
 
@@ -213,6 +216,7 @@ impl Filesystem for Fuse {
         _rdev: u32,
         reply: ReplyEntry,
     ) {
+        debug!("mknod not supported!");
         reply.error(Errno::EROFS as i32)
     }
 
@@ -225,14 +229,17 @@ impl Filesystem for Fuse {
         _umask: u32,
         reply: ReplyEntry,
     ) {
+        debug!("mkdir not supported!");
         reply.error(Errno::EROFS as i32)
     }
 
     fn unlink(&mut self, _req: &Request, _parent: u64, _name: &OsStr, reply: fuser::ReplyEmpty) {
+        debug!("unlink not supported!");
         reply.error(Errno::EROFS as i32)
     }
 
     fn rmdir(&mut self, _req: &Request, _parent: u64, _name: &OsStr, reply: fuser::ReplyEmpty) {
+        debug!("rmdir not supported!");
         reply.error(Errno::EROFS as i32)
     }
 
@@ -244,6 +251,7 @@ impl Filesystem for Fuse {
         _link: &Path,
         reply: ReplyEntry,
     ) {
+        debug!("symlink not supported!");
         reply.error(Errno::EROFS as i32)
     }
 
@@ -257,6 +265,7 @@ impl Filesystem for Fuse {
         _flags: u32,
         reply: fuser::ReplyEmpty,
     ) {
+        debug!("rename not supported!");
         reply.error(Errno::EROFS as i32)
     }
 
@@ -268,6 +277,7 @@ impl Filesystem for Fuse {
         _newname: &OsStr,
         reply: ReplyEntry,
     ) {
+        debug!("link not supported!");
         reply.error(Errno::EROFS as i32)
     }
 
@@ -283,6 +293,7 @@ impl Filesystem for Fuse {
         _lock_owner: Option<u64>,
         reply: fuser::ReplyWrite,
     ) {
+        debug!("write not supported!");
         reply.error(Errno::EROFS as i32)
     }
 
@@ -294,6 +305,7 @@ impl Filesystem for Fuse {
         _lock_owner: u64,
         reply: fuser::ReplyEmpty,
     ) {
+        debug!("flush not supported!");
         reply.error(Errno::EROFS as i32)
     }
 
@@ -305,6 +317,7 @@ impl Filesystem for Fuse {
         _datasync: bool,
         reply: fuser::ReplyEmpty,
     ) {
+        debug!("fsync not supported!");
         reply.error(Errno::EROFS as i32)
     }
 
@@ -316,6 +329,7 @@ impl Filesystem for Fuse {
         _datasync: bool,
         reply: fuser::ReplyEmpty,
     ) {
+        debug!("fsyncdir not supported!");
         reply.error(Errno::EROFS as i32)
     }
 
@@ -333,6 +347,7 @@ impl Filesystem for Fuse {
     }
 
     fn removexattr(&mut self, _req: &Request, _ino: u64, _name: &OsStr, reply: fuser::ReplyEmpty) {
+        debug!("removexattr not supported!");
         reply.error(Errno::EROFS as i32)
     }
 
@@ -346,6 +361,7 @@ impl Filesystem for Fuse {
         _flags: i32,
         reply: fuser::ReplyCreate,
     ) {
+        debug!("create not supported!");
         reply.error(Errno::EROFS as i32)
     }
 
@@ -361,6 +377,7 @@ impl Filesystem for Fuse {
         _pid: u32,
         reply: fuser::ReplyLock,
     ) {
+        debug!("getlk not supported!");
         reply.error(Errno::EROFS as i32)
     }
 
@@ -377,6 +394,7 @@ impl Filesystem for Fuse {
         _sleep: bool,
         reply: fuser::ReplyEmpty,
     ) {
+        debug!("setlk not supported!");
         reply.error(Errno::EROFS as i32)
     }
 
@@ -388,7 +406,10 @@ impl Filesystem for Fuse {
                 let generation = 0;
                 reply.entry(&ttl, &attr, generation)
             }
-            Err(e) => reply.error(e.to_errno()),
+            Err(e) => {
+                debug!("cannot lookup parent: {parent}, name {name:?}!");
+                reply.error(e.to_errno());
+            }
         }
     }
 
@@ -399,14 +420,20 @@ impl Filesystem for Fuse {
                 let ttl = Duration::new(std::u64::MAX, 0);
                 reply.attr(&ttl, &attr)
             }
-            Err(e) => reply.error(e.to_errno()),
+            Err(e) => {
+                debug!("cannot getattr for ino {ino}!");
+                reply.error(e.to_errno())
+            }
         }
     }
 
     fn readlink(&mut self, _req: &Request, ino: u64, reply: ReplyData) {
         match self._readlink(ino) {
             Ok(symlink) => reply.data(symlink.as_bytes()),
-            Err(e) => reply.error(e.to_errno()),
+            Err(e) => {
+                debug!("cannot readlink ino: {ino}!");
+                reply.error(e.to_errno())
+            }
         }
     }
 
@@ -429,7 +456,10 @@ impl Filesystem for Fuse {
         let uoffset: u64 = offset.try_into().unwrap();
         match self._read(ino, uoffset, size) {
             Ok(data) => reply.data(data.as_slice()),
-            Err(e) => reply.error(e.to_errno()),
+            Err(e) => {
+                debug!("cannot read ino {ino}, offset: {uoffset}!");
+                reply.error(e.to_errno())
+            }
         }
     }
 
@@ -461,7 +491,10 @@ impl Filesystem for Fuse {
     ) {
         match self._readdir(ino, offset, &mut reply) {
             Ok(_) => reply.ok(),
-            Err(e) => reply.error(e.to_errno()),
+            Err(e) => {
+                debug!("cannot readdir ino: {ino}, offset {offset}!");
+                reply.error(e.to_errno())
+            }
         }
     }
 
@@ -512,7 +545,10 @@ impl Filesystem for Fuse {
                     reply.error(Errno::ERANGE as i32)
                 }
             }
-            Err(e) => reply.error(e.to_errno()),
+            Err(e) => {
+                debug!("cannot getxattr, ino: {ino}, name {name:?}!");
+                reply.error(e.to_errno())
+            }
         }
     }
 
@@ -531,7 +567,10 @@ impl Filesystem for Fuse {
                     reply.error(Errno::ERANGE as i32)
                 }
             }
-            Err(e) => reply.error(e.to_errno()),
+            Err(e) => {
+                debug!("cannot listxattr, ino {ino}, size {size}!");
+                reply.error(e.to_errno())
+            }
         }
     }
 
