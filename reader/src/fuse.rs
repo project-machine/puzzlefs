@@ -306,7 +306,7 @@ impl Filesystem for Fuse {
         reply: fuser::ReplyEmpty,
     ) {
         debug!("flush not supported!");
-        reply.error(Errno::EROFS as i32)
+        reply.error(Errno::ENOSYS as i32)
     }
 
     fn fsync(
