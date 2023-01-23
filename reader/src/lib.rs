@@ -17,7 +17,7 @@ pub use walk::WalkPuzzleFS;
 pub fn mount(image: Image, tag: &str, mountpoint: &Path) -> Result<()> {
     let pfs = PuzzleFS::open(image, tag)?;
     let fuse = Fuse::new(pfs, None);
-    fuse_ffi::mount2(fuse, mountpoint, &[])?;
+    fuse_ffi::mount2(fuse, mountpoint, &[fuser::MountOption::AllowOther])?;
     Ok(())
 }
 
@@ -29,5 +29,9 @@ pub fn spawn_mount(
 ) -> Result<fuse_ffi::BackgroundSession> {
     let pfs = PuzzleFS::open(image, tag)?;
     let fuse = Fuse::new(pfs, sender);
-    Ok(fuse_ffi::spawn_mount2(fuse, mountpoint, &[])?)
+    Ok(fuse_ffi::spawn_mount2(
+        fuse,
+        mountpoint,
+        &[fuser::MountOption::AllowOther],
+    )?)
 }
