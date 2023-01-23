@@ -79,7 +79,8 @@ impl Fuse {
             | OFlag::O_PATH
             | OFlag::O_NONBLOCK
             | OFlag::O_DIRECTORY
-            | OFlag::O_NOFOLLOW;
+            | OFlag::O_NOFOLLOW
+            | OFlag::O_NOATIME;
         let flags = OFlag::from_bits_truncate(flags_i);
         if !allowed_flags.contains(flags) {
             reply.error(Errno::EROFS as i32)
