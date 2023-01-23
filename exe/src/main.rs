@@ -1,19 +1,13 @@
-use nix::unistd::close;
-use std::fs;
-use std::io::prelude::*;
-use std::path::Path;
-
-use clap::{Args, Parser, Subcommand};
-use std::os::unix::io::AsRawFd;
-use std::thread;
-
 use builder::{add_rootfs_delta, build_initial_rootfs};
+use clap::{Args, Parser, Subcommand};
 use daemonize::Daemonize;
 use env_logger::Env;
 use extractor::extract_rootfs;
-use log::{info, LevelFilter};
+use log::LevelFilter;
 use oci::Image;
-use reader::spawn_mount;
+use reader::{mount, spawn_mount};
+use std::fs;
+use std::path::Path;
 use syslog::{BasicLogger, Facility, Formatter3164};
 
 #[derive(Parser)]
@@ -60,7 +54,7 @@ fn init_logging(log_level: &str) {
     env_logger::Builder::from_env(Env::default().default_filter_or(log_level)).init();
 }
 
-fn init_syslog() -> std::io::Result<()> {
+fn init_syslog(log_level: &str) -> std::io::Result<()> {
     let formatter = Formatter3164 {
         facility: Facility::LOG_USER,
         hostname: None,
@@ -76,7 +70,17 @@ fn init_syslog() -> std::io::Result<()> {
         Ok(logger) => logger,
     };
     log::set_boxed_logger(Box::new(BasicLogger::new(logger)))
-        .map(|()| log::set_max_level(LevelFilter::Info))
+        .map(|()| {
+            log::set_max_level(match log_level {
+                "off" => LevelFilter::Off,
+                "error" => LevelFilter::Error,
+                "warn" => LevelFilter::Warn,
+                "info" => LevelFilter::Info,
+                "debug" => LevelFilter::Debug,
+                "trace" => LevelFilter::Trace,
+                _ => panic!("unexpected log level"),
+            })
+        })
         .unwrap();
     Ok(())
 }
@@ -95,6 +99,13 @@ fn main() -> anyhow::Result<()> {
             image.add_tag(b.tag, desc).map_err(|e| e.into())
         }
         SubCommand::Mount(m) => {
+            let log_level = "info";
+            if m.foreground {
+                init_logging(log_level);
+            } else {
+                init_syslog(log_level)?;
+            }
+
             let oci_dir = Path::new(&m.oci_dir);
             let oci_dir = fs::canonicalize(oci_dir)?;
             let image = Image::new(&oci_dir)?;
@@ -116,65 +127,11 @@ fn main() -> anyhow::Result<()> {
                 // This blocks until either ctrl-c is pressed or the filesystem is unmounted
                 let () = recv.recv().unwrap();
             } else {
-                init_syslog()?;
-                let (mut reader, writer) = os_pipe::pipe()?;
-                let daemonize = Daemonize::new()
-                    .stdout(writer.as_raw_fd())
-                    .stderr(writer.as_raw_fd());
+                let daemonize = Daemonize::new();
 
                 match daemonize.start() {
                     Ok(_) => {
-                        // writer needs to be dropped so it doesn't keep the pipe open
-                        drop(writer);
-                        // this thread receives messages from stdout/stderr and sends them to syslog
-                        let thread_handle = thread::spawn(move || {
-                            let mut output = [0; 4096];
-                            let mut syslog_line = String::new();
-                            loop {
-                                let nr_bytes_read = reader.read(&mut output);
-                                let nr_bytes_read = match nr_bytes_read {
-                                    Ok(r) => r,
-                                    Err(e) => {
-                                        info!("Error {e}");
-                                        break;
-                                    }
-                                };
-                                if nr_bytes_read > 0 {
-                                    if let Ok(str) = std::str::from_utf8(&output[0..nr_bytes_read])
-                                    {
-                                        // line buffering, send messages to syslog line by line
-                                        for c in str.chars() {
-                                            if c == '\n' {
-                                                info!("{syslog_line}");
-                                                syslog_line.clear();
-                                            } else {
-                                                syslog_line.push(c);
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    break;
-                                }
-                            }
-                        });
-
-                        let (fuse_thread_finished, recv) = std::sync::mpsc::channel();
-                        let guard =
-                            spawn_mount(image, &m.tag, &mountpoint, Some(fuse_thread_finished));
-                        match guard {
-                            Ok(_res) => {
-                                // This blocks until the filesystem is unmounted
-                                let () = recv.recv().unwrap();
-                            }
-                            Err(e) => {
-                                info!("cannot mount filesystem: {e}");
-                            }
-                        };
-
-                        // Closing the file descriptors will cause the syslog processing thread to finish
-                        close(std::io::stdout().as_raw_fd()).expect("cannot close stdout");
-                        close(std::io::stderr().as_raw_fd()).expect("cannot close stderr");
-                        thread_handle.join().expect("Cannot join thread");
+                        mount(image, &m.tag, &mountpoint)?;
                     }
                     Err(e) => eprintln!("Error, {e}"),
                 }
