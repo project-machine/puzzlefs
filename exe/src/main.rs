@@ -92,11 +92,16 @@ fn main() -> anyhow::Result<()> {
             let rootfs = Path::new(&b.rootfs);
             let oci_dir = Path::new(&b.oci_dir);
             let image = Image::new(oci_dir)?;
-            let desc = match b.base_layer {
-                Some(base_layer) => add_rootfs_delta(rootfs, image.clone(), &base_layer)?,
-                None => build_initial_rootfs(rootfs, &image)?,
-            };
-            image.add_tag(b.tag, desc).map_err(|e| e.into())
+            match b.base_layer {
+                Some(base_layer) => {
+                    let (desc, image) = add_rootfs_delta(rootfs, image, &base_layer)?;
+                    image.add_tag(b.tag, desc).map_err(|e| e.into())
+                }
+                None => {
+                    let desc = build_initial_rootfs(rootfs, &image)?;
+                    image.add_tag(b.tag, desc).map_err(|e| e.into())
+                }
+            }
         }
         SubCommand::Mount(m) => {
             let log_level = "info";

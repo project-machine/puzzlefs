@@ -35,7 +35,6 @@ struct OCILayout {
     version: String,
 }
 
-#[derive(Clone)]
 pub struct Image {
     oci_dir: PathBuf,
 }
