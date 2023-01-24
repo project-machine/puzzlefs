@@ -610,7 +610,8 @@ mod tests {
         let rootfs_desc = build_test_fs(Path::new("../builder/test/test-1"), &image).unwrap();
         image.add_tag("test".to_string(), rootfs_desc).unwrap();
         let mountpoint = tempdir().unwrap();
-        let _bg = crate::spawn_mount(image, "test", Path::new(mountpoint.path()), None).unwrap();
+        let _bg =
+            crate::spawn_mount(image, "test", Path::new(mountpoint.path()), &[], None).unwrap();
         let ents = fs::read_dir(mountpoint.path())
             .unwrap()
             .collect::<io::Result<Vec<fs::DirEntry>>>()

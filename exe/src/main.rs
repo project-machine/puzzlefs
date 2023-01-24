@@ -10,6 +10,8 @@ use std::fs;
 use std::path::Path;
 use syslog::{BasicLogger, Facility, Formatter3164};
 
+const DEFAULT_MOUNT_OPTIONS: [&str; 1] = ["allow_other"];
+
 #[derive(Parser)]
 #[command(author, version, about)]
 struct Opts {
@@ -128,7 +130,13 @@ fn main() -> anyhow::Result<()> {
                 .unwrap();
 
                 let fuse_thread_finished = send;
-                let _guard = spawn_mount(image, &m.tag, &mountpoint, Some(fuse_thread_finished))?;
+                let _guard = spawn_mount(
+                    image,
+                    &m.tag,
+                    &mountpoint,
+                    &DEFAULT_MOUNT_OPTIONS,
+                    Some(fuse_thread_finished),
+                )?;
                 // This blocks until either ctrl-c is pressed or the filesystem is unmounted
                 let () = recv.recv().unwrap();
             } else {
@@ -136,7 +144,7 @@ fn main() -> anyhow::Result<()> {
 
                 match daemonize.start() {
                     Ok(_) => {
-                        mount(image, &m.tag, &mountpoint)?;
+                        mount(image, &m.tag, &mountpoint, &DEFAULT_MOUNT_OPTIONS)?;
                     }
                     Err(e) => eprintln!("Error, {e}"),
                 }
