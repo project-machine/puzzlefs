@@ -1,10 +1,17 @@
+use log::{debug, warn};
+use os_pipe::PipeWriter;
 use std::convert::TryInto;
 use std::ffi::CString;
 use std::ffi::OsStr;
 use std::ffi::OsString;
+use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::os::raw::c_int;
 use std::os::unix::ffi::OsStrExt;
-use std::path::Path;
+use std::os::unix::fs::FileTypeExt;
+use std::path::{Path, PathBuf};
+use std::thread;
 
 use fuser::{
     FileAttr, FileType, Filesystem, KernelConfig, ReplyData, ReplyEntry, ReplyOpen, Request,
@@ -18,9 +25,15 @@ use format::{Result, WireFormatError};
 
 use super::puzzlefs::{file_read, Inode, InodeMode, PuzzleFS};
 
+pub enum PipeDescriptor {
+    UnnamedPipe(PipeWriter),
+    NamedPipe(PathBuf),
+}
+
 pub struct Fuse {
     pfs: PuzzleFS,
     sender: Option<std::sync::mpsc::Sender<()>>,
+    init_notify: Option<PipeDescriptor>,
     // TODO: LRU cache inodes or something. I had problems fiddling with the borrow checker for the
     // cache, so for now we just do each lookup every time.
 }
@@ -41,8 +54,16 @@ fn mode_to_fuse_type(inode: &Inode) -> Result<FileType> {
 }
 
 impl Fuse {
-    pub fn new(pfs: PuzzleFS, sender: Option<std::sync::mpsc::Sender<()>>) -> Fuse {
-        Fuse { pfs, sender }
+    pub fn new(
+        pfs: PuzzleFS,
+        sender: Option<std::sync::mpsc::Sender<()>>,
+        init_notify: Option<PipeDescriptor>,
+    ) -> Fuse {
+        Fuse {
+            pfs,
+            sender,
+            init_notify,
+        }
     }
 
     fn _lookup(&mut self, parent: u64, name: &OsStr) -> Result<FileAttr> {
@@ -79,9 +100,11 @@ impl Fuse {
             | OFlag::O_PATH
             | OFlag::O_NONBLOCK
             | OFlag::O_DIRECTORY
-            | OFlag::O_NOFOLLOW;
+            | OFlag::O_NOFOLLOW
+            | OFlag::O_NOATIME;
         let flags = OFlag::from_bits_truncate(flags_i);
         if !allowed_flags.contains(flags) {
+            warn!("invalid flags {flags:?}, only allowed {allowed_flags:?}");
             reply.error(Errno::EROFS as i32)
         } else {
             // stateless open for now, slower maybe
@@ -174,6 +197,48 @@ impl Filesystem for Fuse {
         _req: &Request,
         _config: &mut KernelConfig,
     ) -> std::result::Result<(), c_int> {
+        if let Some(init_notify) = self.init_notify.take() {
+            match init_notify {
+                PipeDescriptor::UnnamedPipe(mut pipe_writer) => {
+                    if let Err(e) = pipe_writer.write_all(b"\n") {
+                        warn!("unsuccessful send! {e}");
+                    }
+                }
+                PipeDescriptor::NamedPipe(named_pipe) => {
+                    // since opening a pipe for writing blocks until the reading end is opened
+                    // create a new thread so the filesystem can be used even if nobody is reading from the pipe
+                    thread::spawn(move || {
+                        let md = fs::metadata(&named_pipe);
+                        match md {
+                            Err(e) => {
+                                warn!("cannot get file metadata, {e}");
+                                return;
+                            }
+                            Ok(md) => {
+                                if !md.file_type().is_fifo() {
+                                    warn!(
+                                        "the provided file {} is not a fifo!",
+                                        named_pipe.display()
+                                    );
+                                    return;
+                                }
+                            }
+                        }
+                        let file = OpenOptions::new().write(true).open(&named_pipe);
+                        match file {
+                            Ok(mut file) => {
+                                if let Err(e) = file.write_all(b"\n") {
+                                    warn!("cannot write to pipe {}, {e}", named_pipe.display());
+                                }
+                            }
+                            Err(e) => {
+                                warn!("cannot open pipe {}, {e}", named_pipe.display());
+                            }
+                        }
+                    });
+                }
+            }
+        }
         Ok(())
     }
 
@@ -199,6 +264,7 @@ impl Filesystem for Fuse {
         _flags: Option<u32>,
         reply: fuser::ReplyAttr,
     ) {
+        debug!("setattr not supported!");
         reply.error(Errno::EROFS as i32)
     }
 
@@ -212,6 +278,7 @@ impl Filesystem for Fuse {
         _rdev: u32,
         reply: ReplyEntry,
     ) {
+        debug!("mknod not supported!");
         reply.error(Errno::EROFS as i32)
     }
 
@@ -224,14 +291,17 @@ impl Filesystem for Fuse {
         _umask: u32,
         reply: ReplyEntry,
     ) {
+        debug!("mkdir not supported!");
         reply.error(Errno::EROFS as i32)
     }
 
     fn unlink(&mut self, _req: &Request, _parent: u64, _name: &OsStr, reply: fuser::ReplyEmpty) {
+        debug!("unlink not supported!");
         reply.error(Errno::EROFS as i32)
     }
 
     fn rmdir(&mut self, _req: &Request, _parent: u64, _name: &OsStr, reply: fuser::ReplyEmpty) {
+        debug!("rmdir not supported!");
         reply.error(Errno::EROFS as i32)
     }
 
@@ -243,6 +313,7 @@ impl Filesystem for Fuse {
         _link: &Path,
         reply: ReplyEntry,
     ) {
+        debug!("symlink not supported!");
         reply.error(Errno::EROFS as i32)
     }
 
@@ -256,6 +327,7 @@ impl Filesystem for Fuse {
         _flags: u32,
         reply: fuser::ReplyEmpty,
     ) {
+        debug!("rename not supported!");
         reply.error(Errno::EROFS as i32)
     }
 
@@ -267,6 +339,7 @@ impl Filesystem for Fuse {
         _newname: &OsStr,
         reply: ReplyEntry,
     ) {
+        debug!("link not supported!");
         reply.error(Errno::EROFS as i32)
     }
 
@@ -282,6 +355,7 @@ impl Filesystem for Fuse {
         _lock_owner: Option<u64>,
         reply: fuser::ReplyWrite,
     ) {
+        debug!("write not supported!");
         reply.error(Errno::EROFS as i32)
     }
 
@@ -293,7 +367,8 @@ impl Filesystem for Fuse {
         _lock_owner: u64,
         reply: fuser::ReplyEmpty,
     ) {
-        reply.error(Errno::EROFS as i32)
+        debug!("flush not supported!");
+        reply.error(Errno::ENOSYS as i32)
     }
 
     fn fsync(
@@ -304,6 +379,7 @@ impl Filesystem for Fuse {
         _datasync: bool,
         reply: fuser::ReplyEmpty,
     ) {
+        debug!("fsync not supported!");
         reply.error(Errno::EROFS as i32)
     }
 
@@ -315,6 +391,7 @@ impl Filesystem for Fuse {
         _datasync: bool,
         reply: fuser::ReplyEmpty,
     ) {
+        debug!("fsyncdir not supported!");
         reply.error(Errno::EROFS as i32)
     }
 
@@ -332,6 +409,7 @@ impl Filesystem for Fuse {
     }
 
     fn removexattr(&mut self, _req: &Request, _ino: u64, _name: &OsStr, reply: fuser::ReplyEmpty) {
+        debug!("removexattr not supported!");
         reply.error(Errno::EROFS as i32)
     }
 
@@ -345,6 +423,7 @@ impl Filesystem for Fuse {
         _flags: i32,
         reply: fuser::ReplyCreate,
     ) {
+        debug!("create not supported!");
         reply.error(Errno::EROFS as i32)
     }
 
@@ -360,6 +439,7 @@ impl Filesystem for Fuse {
         _pid: u32,
         reply: fuser::ReplyLock,
     ) {
+        debug!("getlk not supported!");
         reply.error(Errno::EROFS as i32)
     }
 
@@ -376,6 +456,7 @@ impl Filesystem for Fuse {
         _sleep: bool,
         reply: fuser::ReplyEmpty,
     ) {
+        debug!("setlk not supported!");
         reply.error(Errno::EROFS as i32)
     }
 
@@ -387,7 +468,10 @@ impl Filesystem for Fuse {
                 let generation = 0;
                 reply.entry(&ttl, &attr, generation)
             }
-            Err(e) => reply.error(e.to_errno()),
+            Err(e) => {
+                debug!("cannot lookup parent: {parent}, name {name:?}!");
+                reply.error(e.to_errno());
+            }
         }
     }
 
@@ -398,14 +482,20 @@ impl Filesystem for Fuse {
                 let ttl = Duration::new(std::u64::MAX, 0);
                 reply.attr(&ttl, &attr)
             }
-            Err(e) => reply.error(e.to_errno()),
+            Err(e) => {
+                debug!("cannot getattr for ino {ino}!");
+                reply.error(e.to_errno())
+            }
         }
     }
 
     fn readlink(&mut self, _req: &Request, ino: u64, reply: ReplyData) {
         match self._readlink(ino) {
             Ok(symlink) => reply.data(symlink.as_bytes()),
-            Err(e) => reply.error(e.to_errno()),
+            Err(e) => {
+                debug!("cannot readlink ino: {ino}!");
+                reply.error(e.to_errno())
+            }
         }
     }
 
@@ -428,7 +518,10 @@ impl Filesystem for Fuse {
         let uoffset: u64 = offset.try_into().unwrap();
         match self._read(ino, uoffset, size) {
             Ok(data) => reply.data(data.as_slice()),
-            Err(e) => reply.error(e.to_errno()),
+            Err(e) => {
+                debug!("cannot read ino {ino}, offset: {uoffset}!");
+                reply.error(e.to_errno())
+            }
         }
     }
 
@@ -460,7 +553,10 @@ impl Filesystem for Fuse {
     ) {
         match self._readdir(ino, offset, &mut reply) {
             Ok(_) => reply.ok(),
-            Err(e) => reply.error(e.to_errno()),
+            Err(e) => {
+                debug!("cannot readdir ino: {ino}, offset {offset}!");
+                reply.error(e.to_errno())
+            }
         }
     }
 
@@ -511,7 +607,10 @@ impl Filesystem for Fuse {
                     reply.error(Errno::ERANGE as i32)
                 }
             }
-            Err(e) => reply.error(e.to_errno()),
+            Err(e) => {
+                debug!("cannot getxattr, ino: {ino}, name {name:?}!");
+                reply.error(e.to_errno())
+            }
         }
     }
 
@@ -530,7 +629,10 @@ impl Filesystem for Fuse {
                     reply.error(Errno::ERANGE as i32)
                 }
             }
-            Err(e) => reply.error(e.to_errno()),
+            Err(e) => {
+                debug!("cannot listxattr, ino {ino}, size {size}!");
+                reply.error(e.to_errno())
+            }
         }
     }
 
@@ -570,7 +672,8 @@ mod tests {
         let rootfs_desc = build_test_fs(Path::new("../builder/test/test-1"), &image).unwrap();
         image.add_tag("test".to_string(), rootfs_desc).unwrap();
         let mountpoint = tempdir().unwrap();
-        let _bg = crate::spawn_mount(image, "test", Path::new(mountpoint.path()), None).unwrap();
+        let _bg = crate::spawn_mount(image, "test", Path::new(mountpoint.path()), &[], None, None)
+            .unwrap();
         let ents = fs::read_dir(mountpoint.path())
             .unwrap()
             .collect::<io::Result<Vec<fs::DirEntry>>>()

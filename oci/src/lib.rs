@@ -14,6 +14,7 @@ use tempfile::NamedTempFile;
 
 use compression::{Compression, Decompressor};
 use format::{MetadataBlob, Result, Rootfs, WireFormatError};
+use openat::Dir;
 
 mod descriptor;
 pub use descriptor::{Descriptor, Digest};
@@ -35,15 +36,17 @@ struct OCILayout {
     version: String,
 }
 
-#[derive(Clone)]
 pub struct Image {
     oci_dir: PathBuf,
+    oci_dir_fd: Dir,
 }
 
 impl Image {
     pub fn new(oci_dir: &Path) -> Result<Self> {
+        fs::create_dir_all(oci_dir)?;
         let image = Image {
             oci_dir: oci_dir.to_path_buf(),
+            oci_dir_fd: Dir::open(oci_dir)?,
         };
         fs::create_dir_all(image.blob_path())?;
         let layout_file = fs::File::create(oci_dir.join(IMAGE_LAYOUT_PATH))?;
@@ -65,12 +68,17 @@ impl Image {
         } else {
             Ok(Image {
                 oci_dir: oci_dir.to_path_buf(),
+                oci_dir_fd: Dir::open(oci_dir)?,
             })
         }
     }
 
     pub fn blob_path(&self) -> PathBuf {
         self.oci_dir.join("blobs/sha256")
+    }
+
+    pub fn blob_path_relative(&self) -> PathBuf {
+        PathBuf::from("blobs/sha256")
     }
 
     pub fn put_blob<R: io::Read, C: Compression, MT: media_types::MediaType>(
@@ -94,7 +102,8 @@ impl Image {
     }
 
     fn open_raw_blob(&self, digest: &Digest) -> io::Result<fs::File> {
-        fs::File::open(self.blob_path().join(digest.to_string()))
+        self.oci_dir_fd
+            .open_file(&self.blob_path_relative().join(digest.to_string()))
     }
 
     pub fn open_compressed_blob<C: Compression>(

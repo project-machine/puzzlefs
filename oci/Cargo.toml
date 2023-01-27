@@ -15,3 +15,5 @@ compression = { path = "../compression" }
 format = { path = "../format" }
 serde = { version = "^1.0.27", features = [ "derive" ] }
 serde_json = "*"
+log = "0.4.17"
+openat = "0.1.21"

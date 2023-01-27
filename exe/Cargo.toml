@@ -13,7 +13,7 @@ ctrlc = "3.2.0"
 log = "0.4.17"
 env_logger = "0.9.3"
 syslog = "6.0.1"
-os_pipe = "1.1.1"
+os_pipe = "1.1.2"
 format = { path = "../format" }
 builder = { path = "../builder" }
 oci = { path = "../oci" }
