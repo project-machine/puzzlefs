@@ -4,10 +4,14 @@ use std::convert::TryInto;
 use std::ffi::CString;
 use std::ffi::OsStr;
 use std::ffi::OsString;
+use std::fs;
+use std::fs::OpenOptions;
 use std::io::Write;
 use std::os::raw::c_int;
 use std::os::unix::ffi::OsStrExt;
-use std::path::Path;
+use std::os::unix::fs::FileTypeExt;
+use std::path::{Path, PathBuf};
+use std::thread;
 
 use fuser::{
     FileAttr, FileType, Filesystem, KernelConfig, ReplyData, ReplyEntry, ReplyOpen, Request,
@@ -21,10 +25,15 @@ use format::{Result, WireFormatError};
 
 use super::puzzlefs::{file_read, Inode, InodeMode, PuzzleFS};
 
+pub enum PipeDescriptor {
+    UnnamedPipe(PipeWriter),
+    NamedPipe(PathBuf),
+}
+
 pub struct Fuse {
     pfs: PuzzleFS,
     sender: Option<std::sync::mpsc::Sender<()>>,
-    init_notify: Option<PipeWriter>,
+    init_notify: Option<PipeDescriptor>,
     // TODO: LRU cache inodes or something. I had problems fiddling with the borrow checker for the
     // cache, so for now we just do each lookup every time.
 }
@@ -48,7 +57,7 @@ impl Fuse {
     pub fn new(
         pfs: PuzzleFS,
         sender: Option<std::sync::mpsc::Sender<()>>,
-        init_notify: Option<PipeWriter>,
+        init_notify: Option<PipeDescriptor>,
     ) -> Fuse {
         Fuse {
             pfs,
@@ -188,9 +197,46 @@ impl Filesystem for Fuse {
         _req: &Request,
         _config: &mut KernelConfig,
     ) -> std::result::Result<(), c_int> {
-        if let Some(mut init_notify) = self.init_notify.take() {
-            if let Err(e) = init_notify.write_all(b"\n") {
-                warn!("unsuccessful send! {e}");
+        if let Some(init_notify) = self.init_notify.take() {
+            match init_notify {
+                PipeDescriptor::UnnamedPipe(mut pipe_writer) => {
+                    if let Err(e) = pipe_writer.write_all(b"\n") {
+                        warn!("unsuccessful send! {e}");
+                    }
+                }
+                PipeDescriptor::NamedPipe(named_pipe) => {
+                    // since opening a pipe for writing blocks until the reading end is opened
+                    // create a new thread so the filesystem can be used even if nobody is reading from the pipe
+                    thread::spawn(move || {
+                        let md = fs::metadata(&named_pipe);
+                        match md {
+                            Err(e) => {
+                                warn!("cannot get file metadata, {e}");
+                                return;
+                            }
+                            Ok(md) => {
+                                if !md.file_type().is_fifo() {
+                                    warn!(
+                                        "the provided file {} is not a fifo!",
+                                        named_pipe.display()
+                                    );
+                                    return;
+                                }
+                            }
+                        }
+                        let file = OpenOptions::new().write(true).open(&named_pipe);
+                        match file {
+                            Ok(mut file) => {
+                                if let Err(e) = file.write_all(b"\n") {
+                                    warn!("cannot write to pipe {}, {e}", named_pipe.display());
+                                }
+                            }
+                            Err(e) => {
+                                warn!("cannot open pipe {}, {e}", named_pipe.display());
+                            }
+                        }
+                    });
+                }
             }
         }
         Ok(())
@@ -626,8 +672,8 @@ mod tests {
         let rootfs_desc = build_test_fs(Path::new("../builder/test/test-1"), &image).unwrap();
         image.add_tag("test".to_string(), rootfs_desc).unwrap();
         let mountpoint = tempdir().unwrap();
-        let _bg =
-            crate::spawn_mount(image, "test", Path::new(mountpoint.path()), &[], None).unwrap();
+        let _bg = crate::spawn_mount(image, "test", Path::new(mountpoint.path()), &[], None, None)
+            .unwrap();
         let ents = fs::read_dir(mountpoint.path())
             .unwrap()
             .collect::<io::Result<Vec<fs::DirEntry>>>()

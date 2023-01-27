@@ -5,10 +5,11 @@ use env_logger::Env;
 use extractor::extract_rootfs;
 use log::{info, LevelFilter};
 use oci::Image;
+use reader::fuse::PipeDescriptor;
 use reader::{mount, spawn_mount};
 use std::fs;
 use std::io::prelude::*;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use syslog::{BasicLogger, Facility, Formatter3164};
 
 const DEFAULT_MOUNT_OPTIONS: [&str; 1] = ["allow_other"];
@@ -43,6 +44,8 @@ struct Mount {
     mountpoint: String,
     #[arg(short, long)]
     foreground: bool,
+    #[arg(short, long, value_name = "init-pipe")]
+    init_pipe: Option<String>,
 }
 
 #[derive(Args)]
@@ -136,6 +139,8 @@ fn main() -> anyhow::Result<()> {
                     &m.tag,
                     &mountpoint,
                     &DEFAULT_MOUNT_OPTIONS,
+                    m.init_pipe
+                        .map(|x| PipeDescriptor::NamedPipe(PathBuf::from(x))),
                     Some(fuse_thread_finished),
                 )?;
                 // This blocks until either ctrl-c is pressed or the filesystem is unmounted
@@ -157,7 +162,7 @@ fn main() -> anyhow::Result<()> {
                             &m.tag,
                             &mountpoint,
                             &DEFAULT_MOUNT_OPTIONS,
-                            Some(init_notify),
+                            Some(PipeDescriptor::UnnamedPipe(init_notify)),
                         )?;
                     }
                     Err(e) => eprintln!("Error, {e}"),

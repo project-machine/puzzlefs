@@ -12,7 +12,7 @@ pub mod fuse;
 pub use crate::fuse::Fuse;
 
 mod walk;
-use os_pipe::PipeWriter;
+use crate::fuse::PipeDescriptor;
 pub use walk::WalkPuzzleFS;
 
 // copied from the fuser function 'MountOption::from_str' because it's not exported
@@ -46,7 +46,7 @@ pub fn mount(
     tag: &str,
     mountpoint: &Path,
     options: &[&str],
-    init_notify: Option<PipeWriter>,
+    init_notify: Option<PipeDescriptor>,
 ) -> Result<()> {
     let pfs = PuzzleFS::open(image, tag)?;
     let fuse = Fuse::new(pfs, None, init_notify);
@@ -66,10 +66,11 @@ pub fn spawn_mount(
     tag: &str,
     mountpoint: &Path,
     options: &[&str],
+    init_notify: Option<PipeDescriptor>,
     sender: Option<std::sync::mpsc::Sender<()>>,
 ) -> Result<fuse_ffi::BackgroundSession> {
     let pfs = PuzzleFS::open(image, tag)?;
-    let fuse = Fuse::new(pfs, sender, None);
+    let fuse = Fuse::new(pfs, sender, init_notify);
     Ok(fuse_ffi::spawn_mount2(
         fuse,
         mountpoint,
