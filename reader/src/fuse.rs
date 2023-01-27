@@ -1,8 +1,10 @@
 use log::{debug, warn};
+use os_pipe::PipeWriter;
 use std::convert::TryInto;
 use std::ffi::CString;
 use std::ffi::OsStr;
 use std::ffi::OsString;
+use std::io::Write;
 use std::os::raw::c_int;
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
@@ -22,6 +24,7 @@ use super::puzzlefs::{file_read, Inode, InodeMode, PuzzleFS};
 pub struct Fuse {
     pfs: PuzzleFS,
     sender: Option<std::sync::mpsc::Sender<()>>,
+    init_notify: Option<PipeWriter>,
     // TODO: LRU cache inodes or something. I had problems fiddling with the borrow checker for the
     // cache, so for now we just do each lookup every time.
 }
@@ -42,8 +45,16 @@ fn mode_to_fuse_type(inode: &Inode) -> Result<FileType> {
 }
 
 impl Fuse {
-    pub fn new(pfs: PuzzleFS, sender: Option<std::sync::mpsc::Sender<()>>) -> Fuse {
-        Fuse { pfs, sender }
+    pub fn new(
+        pfs: PuzzleFS,
+        sender: Option<std::sync::mpsc::Sender<()>>,
+        init_notify: Option<PipeWriter>,
+    ) -> Fuse {
+        Fuse {
+            pfs,
+            sender,
+            init_notify,
+        }
     }
 
     fn _lookup(&mut self, parent: u64, name: &OsStr) -> Result<FileAttr> {
@@ -177,6 +188,11 @@ impl Filesystem for Fuse {
         _req: &Request,
         _config: &mut KernelConfig,
     ) -> std::result::Result<(), c_int> {
+        if let Some(mut init_notify) = self.init_notify.take() {
+            if let Err(e) = init_notify.write_all(b"\n") {
+                warn!("unsuccessful send! {e}");
+            }
+        }
         Ok(())
     }
 

@@ -3,10 +3,11 @@ use clap::{Args, Parser, Subcommand};
 use daemonize::Daemonize;
 use env_logger::Env;
 use extractor::extract_rootfs;
-use log::LevelFilter;
+use log::{info, LevelFilter};
 use oci::Image;
 use reader::{mount, spawn_mount};
 use std::fs;
+use std::io::prelude::*;
 use std::path::Path;
 use syslog::{BasicLogger, Facility, Formatter3164};
 
@@ -140,11 +141,24 @@ fn main() -> anyhow::Result<()> {
                 // This blocks until either ctrl-c is pressed or the filesystem is unmounted
                 let () = recv.recv().unwrap();
             } else {
-                let daemonize = Daemonize::new();
+                let (mut recv, init_notify) = os_pipe::pipe()?;
+
+                let daemonize = Daemonize::new().exit_action(move || {
+                    let mut read_buffer = [0];
+                    if let Err(e) = recv.read_exact(&mut read_buffer) {
+                        info!("error reading from pipe {e}")
+                    }
+                });
 
                 match daemonize.start() {
                     Ok(_) => {
-                        mount(image, &m.tag, &mountpoint, &DEFAULT_MOUNT_OPTIONS)?;
+                        mount(
+                            image,
+                            &m.tag,
+                            &mountpoint,
+                            &DEFAULT_MOUNT_OPTIONS,
+                            Some(init_notify),
+                        )?;
                     }
                     Err(e) => eprintln!("Error, {e}"),
                 }

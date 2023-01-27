@@ -13,6 +13,7 @@ oci = { path = "../oci" }
 fuser = {version = "0.11.1", default-features = false}
 nix = "*"
 log = "0.4.17"
+os_pipe = "1.1.2"
 
 [dev-dependencies]
 builder = { path = "../builder" }
