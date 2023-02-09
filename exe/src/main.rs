@@ -12,8 +12,6 @@ use std::io::prelude::*;
 use std::path::{Path, PathBuf};
 use syslog::{BasicLogger, Facility, Formatter3164};
 
-const DEFAULT_MOUNT_OPTIONS: [&str; 1] = ["allow_other"];
-
 #[derive(Parser)]
 #[command(author, version, about)]
 struct Opts {
@@ -46,6 +44,8 @@ struct Mount {
     foreground: bool,
     #[arg(short, long, value_name = "init-pipe")]
     init_pipe: Option<String>,
+    #[arg(short, value_delimiter = ',')]
+    options: Option<Vec<String>>,
 }
 
 #[derive(Args)]
@@ -138,7 +138,7 @@ fn main() -> anyhow::Result<()> {
                     image,
                     &m.tag,
                     &mountpoint,
-                    &DEFAULT_MOUNT_OPTIONS,
+                    &m.options.unwrap_or_default(),
                     m.init_pipe
                         .map(|x| PipeDescriptor::NamedPipe(PathBuf::from(x))),
                     Some(fuse_thread_finished),
@@ -161,7 +161,7 @@ fn main() -> anyhow::Result<()> {
                             image,
                             &m.tag,
                             &mountpoint,
-                            &DEFAULT_MOUNT_OPTIONS,
+                            &m.options.unwrap_or_default()[..],
                             Some(PipeDescriptor::UnnamedPipe(init_notify)),
                         )?;
                     }
