@@ -19,7 +19,7 @@
 use std::cmp::min;
 use std::io;
 
-use fastcdc::FastCDC;
+use fastcdc::ronomon::FastCDC;
 
 // 'ubuntu' base image is ~40M, as are other base images. If we have any hope of wanting to share
 // these, we should allow small chunks.
@@ -136,7 +136,7 @@ impl io::Write for FastCDCWrapper {
 mod tests {
     use std::fs;
 
-    use fastcdc::Chunk;
+    use fastcdc::ronomon::Chunk;
     use fastrand::Rng;
 
     use super::*;

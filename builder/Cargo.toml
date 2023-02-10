@@ -11,7 +11,7 @@ oci = { path = "../oci" }
 reader = { path = "../reader" }
 walkdir = "2"
 serde_cbor = "*"
-fastcdc = "*"
+fastcdc = "3.0.0"
 nix = "*"
 
 [dev-dependencies]
