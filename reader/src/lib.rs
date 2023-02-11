@@ -41,11 +41,11 @@ fn mount_option_from_str(s: &str) -> fuse_ffi::MountOption {
     }
 }
 
-pub fn mount(
+pub fn mount<T: AsRef<str>>(
     image: Image,
     tag: &str,
     mountpoint: &Path,
-    options: &[&str],
+    options: &[T],
     init_notify: Option<PipeDescriptor>,
 ) -> Result<()> {
     let pfs = PuzzleFS::open(image, tag)?;
@@ -55,17 +55,17 @@ pub fn mount(
         mountpoint,
         &options
             .iter()
-            .map(|option| mount_option_from_str(option))
+            .map(|option| mount_option_from_str(option.as_ref()))
             .collect::<Vec<_>>(),
     )?;
     Ok(())
 }
 
-pub fn spawn_mount(
+pub fn spawn_mount<T: AsRef<str>>(
     image: Image,
     tag: &str,
     mountpoint: &Path,
-    options: &[&str],
+    options: &[T],
     init_notify: Option<PipeDescriptor>,
     sender: Option<std::sync::mpsc::Sender<()>>,
 ) -> Result<fuse_ffi::BackgroundSession> {
@@ -76,7 +76,7 @@ pub fn spawn_mount(
         mountpoint,
         &options
             .iter()
-            .map(|option| mount_option_from_str(option))
+            .map(|option| mount_option_from_str(option.as_ref()))
             .collect::<Vec<_>>(),
     )?)
 }
