@@ -114,9 +114,9 @@ impl Image {
         Ok(C::decompress(f))
     }
 
-    pub fn open_metadata_blob<C: Compression>(&self, digest: &Digest) -> io::Result<MetadataBlob> {
+    pub fn open_metadata_blob(&self, digest: &Digest) -> io::Result<MetadataBlob> {
         let f = self.open_raw_blob(digest)?;
-        Ok(MetadataBlob::new::<C>(f))
+        Ok(MetadataBlob::new(f))
     }
 
     pub fn open_rootfs_blob<C: Compression>(&self, tag: &str) -> Result<Rootfs> {

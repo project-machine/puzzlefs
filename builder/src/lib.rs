@@ -514,9 +514,7 @@ pub mod tests {
         assert!(md.is_file());
 
         let metadata_digest = rootfs.metadatas[0].try_into().unwrap();
-        let mut blob = image
-            .open_metadata_blob::<compression::Noop>(&metadata_digest)
-            .unwrap();
+        let mut blob = image.open_metadata_blob(&metadata_digest).unwrap();
         let inodes = blob.read_inodes().unwrap();
 
         // we can at least deserialize inodes and they look sane

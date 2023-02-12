@@ -17,7 +17,7 @@ use serde::de::Error as SerdeError;
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use compression::{Compression, Decompressor};
+use compression::Decompressor;
 
 use crate::error::{Result, WireFormatError};
 
@@ -598,7 +598,7 @@ pub struct MetadataBlob {
 }
 
 impl MetadataBlob {
-    pub fn new<C: Compression>(f: fs::File) -> MetadataBlob {
+    pub fn new(f: fs::File) -> MetadataBlob {
         MetadataBlob { f: Box::new(f) }
     }
 
