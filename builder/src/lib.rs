@@ -1,6 +1,5 @@
 use std::cmp::min;
 use std::collections::HashMap;
-use std::collections::VecDeque;
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io;
@@ -20,8 +19,13 @@ use reader::PuzzleFS;
 
 use nix::errno::Errno;
 
-mod fastcdc_fs;
-use fastcdc_fs::{ChunkWithData, FastCDCWrapper};
+use fastcdc::v2020::StreamCDC;
+mod filesystem;
+use filesystem::FilesystemStream;
+
+const MIN_CHUNK_SIZE: u32 = 1024 * 1024;
+const AVG_CHUNK_SIZE: u32 = 4 * 1024 * 1024;
+const MAX_CHUNK_SIZE: u32 = 16 * 1024 * 1024;
 
 fn walker(rootfs: &Path) -> WalkDir {
     // breadth first search for sharing, don't cross filesystems just to be safe, order by file
@@ -63,52 +67,35 @@ struct Other {
     additional: Option<InodeAdditional>,
 }
 
-fn write_chunks_to_oci(oci: &Image, fcdc: &mut FastCDCWrapper) -> Result<Vec<FileChunk>> {
-    let mut pending_chunks = Vec::<ChunkWithData>::new();
-    fcdc.get_pending_chunks(&mut pending_chunks);
-    pending_chunks
-        .iter_mut()
-        .map(|c| {
-            let desc = oci.put_blob::<_, compression::Noop, media_types::Chunk>(&*c.data)?;
-            Ok(FileChunk {
-                blob: BlobRef {
-                    kind: BlobRefKind::Other {
-                        digest: desc.digest.underlying(),
-                    },
-                    offset: 0,
-                },
-                len: desc.size,
-            })
-        })
-        .collect::<Result<Vec<FileChunk>>>()
-}
+fn process_chunks(oci: &Image, mut chunker: StreamCDC, files: &mut [File]) -> Result<()> {
+    let mut file_iter = files.iter_mut();
+    let mut file_used = 0;
+    let mut file = None;
+    for f in file_iter.by_ref() {
+        if f.md.size() > 0 {
+            file = Some(f);
+            break;
+        }
+    }
 
-fn merge_chunks_and_prev_files(
-    chunks: &mut Vec<FileChunk>,
-    files: &mut Vec<File>,
-    prev_files: &mut VecDeque<File>,
-) -> io::Result<()> {
-    let mut file = prev_files.pop_front();
-    let mut file_used: u64 = Iterator::sum(
-        file.as_ref()
-            .unwrap()
-            .chunk_list
-            .chunks
-            .iter()
-            .map(|c| c.len),
-    );
+    'outer: for result in &mut chunker {
+        let chunk = result.unwrap();
+        let mut chunk_used: u64 = 0;
 
-    'outer: for chunk in chunks.drain(..) {
-        let mut chunk_used = 0;
-        while chunk_used < chunk.len {
+        let desc = oci.put_blob::<_, compression::Noop, media_types::Chunk>(&*chunk.data)?;
+        let blob_kind = BlobRefKind::Other {
+            digest: desc.digest.underlying(),
+        };
+
+        while chunk_used < chunk.length as u64 {
             let room = min(
                 file.as_ref().unwrap().md.len() - file_used,
-                chunk.len - chunk_used,
+                chunk.length as u64 - chunk_used,
             );
 
             let blob = BlobRef {
                 offset: chunk_used,
-                kind: chunk.blob.kind,
+                kind: blob_kind,
             };
 
             file.as_mut()
@@ -122,10 +109,16 @@ fn merge_chunks_and_prev_files(
 
             // get next file
             if file_used == file.as_ref().unwrap().md.len() {
-                files.push(file.unwrap());
                 file_used = 0;
+                file = None;
 
-                file = prev_files.pop_front();
+                for f in file_iter.by_ref() {
+                    if f.md.size() > 0 {
+                        file = Some(f);
+                        break;
+                    }
+                }
+
                 if file.is_none() {
                     break 'outer;
                 }
@@ -134,12 +127,7 @@ fn merge_chunks_and_prev_files(
     }
 
     // If there are no files left we also expect there are no chunks left
-    assert!(chunks.is_empty());
-
-    // Not all the chunks were generated for this file, so we need to continue processing it later
-    if let Some(file) = file {
-        prev_files.push_front(file);
-    }
+    assert!(chunker.next().is_none());
 
     Ok(())
 }
@@ -153,6 +141,7 @@ fn build_delta(rootfs: &Path, oci: &Image, mut existing: Option<PuzzleFS>) -> Re
     let mut files = Vec::<File>::new();
     let mut others = Vec::<Other>::new();
     let mut pfs_inodes = Vec::<Inode>::new();
+    let mut fs_stream = FilesystemStream::new();
 
     // host to puzzlefs inode mapping for hard link deteciton
     let mut host_to_pfs = HashMap::<u64, Ino>::new();
@@ -161,9 +150,6 @@ fn build_delta(rootfs: &Path, oci: &Image, mut existing: Option<PuzzleFS>) -> Re
         .as_mut()
         .map(|pfs| pfs.max_inode().map(|i| i + 1))
         .unwrap_or_else(|| Ok(2))?;
-
-    let mut fcdc = FastCDCWrapper::new();
-    let mut prev_files = VecDeque::<File>::new();
 
     fn lookup_existing(existing: &mut Option<PuzzleFS>, p: &Path) -> Result<Option<reader::Inode>> {
         existing
@@ -306,8 +292,7 @@ fn build_delta(rootfs: &Path, oci: &Image, mut existing: Option<PuzzleFS>) -> Re
                     },
                 );
             } else if md.is_file() {
-                let mut f = fs::File::open(e.path())?;
-                let file_size = io::copy(&mut f, &mut fcdc)?;
+                fs_stream.push(&e.path());
 
                 let file = File {
                     ino: cur_ino,
@@ -318,21 +303,7 @@ fn build_delta(rootfs: &Path, oci: &Image, mut existing: Option<PuzzleFS>) -> Re
                     additional,
                 };
 
-                if file_size != 0 {
-                    let mut written_chunks = write_chunks_to_oci(oci, &mut fcdc)?;
-
-                    prev_files.push_back(file);
-                    // a chunk is generated when the content of the previous file(s) fill up a fixed-size buffer
-                    if !written_chunks.is_empty() {
-                        merge_chunks_and_prev_files(
-                            &mut written_chunks,
-                            &mut files,
-                            &mut prev_files,
-                        )?;
-                    }
-                } else {
-                    files.push(file);
-                }
+                files.push(file);
             } else {
                 let o = Other {
                     ino: cur_ino,
@@ -344,22 +315,13 @@ fn build_delta(rootfs: &Path, oci: &Image, mut existing: Option<PuzzleFS>) -> Re
         }
     }
 
-    // all inodes done, we need to finish up the cdc chunking
-    fcdc.finish();
-    let mut written_chunks = write_chunks_to_oci(oci, &mut fcdc)?;
-
-    // if we have chunks, we should have files too
-    assert!(written_chunks.is_empty() || !prev_files.is_empty());
-    assert!(!written_chunks.is_empty() || prev_files.is_empty());
-
-    if !written_chunks.is_empty() {
-        // merge everything leftover with all previous files
-        merge_chunks_and_prev_files(&mut written_chunks, &mut files, &mut prev_files).unwrap();
-
-        // we should have consumed all the chunks and all the previous files.
-        assert!(written_chunks.is_empty());
-        assert!(prev_files.is_empty());
-    }
+    let fcdc = StreamCDC::new(
+        Box::new(fs_stream),
+        MIN_CHUNK_SIZE,
+        AVG_CHUNK_SIZE,
+        MAX_CHUNK_SIZE,
+    );
+    process_chunks(oci, fcdc, &mut files)?;
 
     // total inode serailized size
     let num_inodes = pfs_inodes.len() + dirs.len() + files.len() + others.len();
@@ -552,9 +514,7 @@ pub mod tests {
         assert!(md.is_file());
 
         let metadata_digest = rootfs.metadatas[0].try_into().unwrap();
-        let mut blob = image
-            .open_metadata_blob::<compression::Noop>(&metadata_digest)
-            .unwrap();
+        let mut blob = image.open_metadata_blob(&metadata_digest).unwrap();
         let inodes = blob.read_inodes().unwrap();
 
         // we can at least deserialize inodes and they look sane
@@ -632,132 +592,6 @@ pub mod tests {
         assert_eq!(foo_dir.inode.dir_entries().unwrap().len(), 0);
 
         assert!(walker.next().is_none());
-    }
-
-    #[test]
-    fn test_missing_blob_fix() {
-        let dir = tempdir().unwrap();
-        let oci = Image::new(dir.path()).unwrap();
-        let rootfs = Path::new("../builder/test/test-2");
-
-        let mut dirs = HashMap::<u64, Dir>::new();
-        let mut files = Vec::<File>::new();
-        let mut others = Vec::<Other>::new();
-
-        // host to puzzlefs inode mapping for hard link deteciton
-        let mut host_to_pfs = HashMap::<u64, Ino>::new();
-
-        let mut cur_ino: u64 = 1;
-
-        let min = 16384;
-        let avg = 32768;
-        let max = 65536;
-        let mut fcdc = FastCDCWrapper::new_with_sizes(min, avg, max);
-        let mut prev_files = VecDeque::<File>::new();
-
-        for entry in walker(rootfs) {
-            let e = entry.map_err(io::Error::from).unwrap();
-            let md = e.metadata().map_err(io::Error::from).unwrap();
-
-            // now that we know the ino of this thing, let's put it in the parent directory (assuming
-            // this is not "/" for our image, aka inode #1)
-            if cur_ino != 1 {
-                // is this a hard link.? if so, just use the existing ino we have rendered. otherewise,
-                // use a new one
-                let the_ino = host_to_pfs.get(&md.ino()).copied().unwrap_or(cur_ino);
-                let parent_path = e
-                    .path()
-                    .parent()
-                    .ok_or_else(|| {
-                        io::Error::new(
-                            io::ErrorKind::Other,
-                            format!("no parent for {}", e.path().display()),
-                        )
-                    })
-                    .unwrap();
-                let parent = dirs
-                    .get_mut(&fs::symlink_metadata(parent_path).unwrap().ino())
-                    .ok_or_else(|| {
-                        io::Error::new(
-                            io::ErrorKind::Other,
-                            format!("no pfs inode for {}", e.path().display()),
-                        )
-                    })
-                    .unwrap();
-                parent.add_entry(e.path().file_name().unwrap().to_os_string(), the_ino);
-
-                // if it was a hard link, we don't need to actually render it again
-                if host_to_pfs.get(&md.ino()).is_some() {
-                    continue;
-                }
-            }
-
-            host_to_pfs.insert(md.ino(), cur_ino);
-
-            // render as much of the inode as we can
-            let additional = InodeAdditional::new(e.path(), &md).unwrap();
-            if md.is_dir() {
-                dirs.insert(
-                    md.ino(),
-                    Dir {
-                        ino: cur_ino,
-                        md,
-                        dir_list: DirList {
-                            entries: Vec::<DirEnt>::new(),
-                            look_below: false,
-                        },
-                        additional,
-                    },
-                );
-            } else if md.is_file() {
-                let mut f = fs::File::open(e.path()).unwrap();
-                io::copy(&mut f, &mut fcdc).unwrap();
-
-                let mut written_chunks = write_chunks_to_oci(&oci, &mut fcdc).unwrap();
-                let file = File {
-                    ino: cur_ino,
-                    md,
-                    chunk_list: FileChunkList {
-                        chunks: Vec::<FileChunk>::new(),
-                    },
-                    additional,
-                };
-
-                prev_files.push_back(file);
-                // a chunk is generated when the content of the previous file(s) fill up a fixed-size buffer
-
-                if !written_chunks.is_empty() {
-                    merge_chunks_and_prev_files(&mut written_chunks, &mut files, &mut prev_files)
-                        .unwrap();
-                }
-            } else {
-                let o = Other {
-                    ino: cur_ino,
-                    md,
-                    additional,
-                };
-                others.push(o);
-            }
-
-            cur_ino += 1;
-        }
-
-        // all inodes done, we need to finish up the cdc chunking
-        fcdc.finish();
-        let mut written_chunks = write_chunks_to_oci(&oci, &mut fcdc).unwrap();
-
-        // if we have chunks, we should have files too
-        assert!(written_chunks.is_empty() || !prev_files.is_empty());
-        assert!(!written_chunks.is_empty() || prev_files.is_empty());
-
-        if !written_chunks.is_empty() {
-            // merge everything leftover with all previous files
-            merge_chunks_and_prev_files(&mut written_chunks, &mut files, &mut prev_files).unwrap();
-
-            // we should have consumed all the chunks and all the previous files.
-            assert!(written_chunks.is_empty());
-            assert!(prev_files.is_empty());
-        }
     }
 
     fn do_vecs_match<T: PartialEq>(a: &[T], b: &[T]) -> bool {

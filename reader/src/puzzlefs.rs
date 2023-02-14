@@ -153,8 +153,7 @@ impl PuzzleFS {
             .iter()
             .map(|md| -> Result<MetadataBlob> {
                 let digest = &<Digest>::try_from(md)?;
-                oci.open_metadata_blob::<compression::Noop>(digest)
-                    .map_err(|e| e.into())
+                oci.open_metadata_blob(digest).map_err(|e| e.into())
             })
             .collect::<format::Result<Vec<MetadataBlob>>>()?;
         Ok(PuzzleFS {
