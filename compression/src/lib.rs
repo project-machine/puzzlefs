@@ -1,8 +1,8 @@
 use std::fs;
 use std::io;
 
-mod zstd;
-pub use zstd::*;
+mod zstd_seekable_wrapper;
+pub use zstd_seekable_wrapper::*;
 
 pub trait Compressor: io::Write {
     fn end(&mut self) -> io::Result<()>;
