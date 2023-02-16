@@ -1,3 +1,5 @@
+use common::{AVG_CHUNK_SIZE, MAX_CHUNK_SIZE, MIN_CHUNK_SIZE};
+use compression::Compression;
 use fsverity_helpers::{
     check_fs_verity, fsverity_enable, get_fs_verity_digest, InnerHashAlgorithm,
     FS_VERITY_BLOCK_SIZE_DEFAULT,
@@ -29,12 +31,6 @@ use nix::errno::Errno;
 use fastcdc::v2020::StreamCDC;
 mod filesystem;
 use filesystem::FilesystemStream;
-
-// Quoting from https://github.com/ronomon/deduplication
-// An average chunk size of 64 KB is recommended for optimal end-to-end deduplication and compression efficiency
-const MIN_CHUNK_SIZE: u32 = 16 * 1024;
-const AVG_CHUNK_SIZE: u32 = 64 * 1024;
-const MAX_CHUNK_SIZE: u32 = 256 * 1024;
 
 const PUZZLEFS_IMAGE_MANIFEST_VERSION: u64 = 1;
 
@@ -78,7 +74,7 @@ struct Other {
     additional: Option<InodeAdditional>,
 }
 
-fn process_chunks(
+fn process_chunks<C: Compression>(
     oci: &Image,
     mut chunker: StreamCDC,
     files: &mut [File],
@@ -98,7 +94,7 @@ fn process_chunks(
         let chunk = result.unwrap();
         let mut chunk_used: u64 = 0;
 
-        let desc = oci.put_blob::<_, compression::Noop, media_types::Chunk>(&*chunk.data)?;
+        let desc = oci.put_blob::<_, C, media_types::Chunk>(&*chunk.data)?;
         let blob_kind = BlobRefKind::Other {
             digest: desc.digest.underlying(),
         };
@@ -155,7 +151,7 @@ fn inode_encoded_size(num_inodes: usize) -> usize {
     format::cbor_size_of_list_header(num_inodes) + num_inodes * format::INODE_WIRE_SIZE
 }
 
-fn build_delta(
+fn build_delta<C: Compression>(
     rootfs: &Path,
     oci: &Image,
     mut existing: Option<PuzzleFS>,
@@ -345,7 +341,7 @@ fn build_delta(
         AVG_CHUNK_SIZE,
         MAX_CHUNK_SIZE,
     );
-    process_chunks(oci, fcdc, &mut files, verity_data)?;
+    process_chunks::<C>(oci, fcdc, &mut files, verity_data)?;
 
     // total inode serailized size
     let num_inodes = pfs_inodes.len() + dirs.len() + files.len() + others.len();
@@ -461,9 +457,9 @@ fn build_delta(
     Ok(desc)
 }
 
-pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Descriptor> {
+pub fn build_initial_rootfs<C: Compression>(rootfs: &Path, oci: &Image) -> Result<Descriptor> {
     let mut verity_data: VerityData = BTreeMap::new();
-    let desc = build_delta(rootfs, oci, None, &mut verity_data)?;
+    let desc = build_delta::<C>(rootfs, oci, None, &mut verity_data)?;
     let metadatas = [BlobRef {
         offset: 0,
         kind: BlobRefKind::Other {
@@ -486,7 +482,7 @@ pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Descriptor> {
 
 // add_rootfs_delta adds whatever the delta between the current rootfs and the puzzlefs
 // representation from the tag is.
-pub fn add_rootfs_delta(
+pub fn add_rootfs_delta<C: Compression>(
     rootfs_path: &Path,
     oci: Image,
     tag: &str,
@@ -503,7 +499,7 @@ pub fn add_rootfs_delta(
         ));
     }
 
-    let desc = build_delta(rootfs_path, &oci, Some(pfs), &mut verity_data)?;
+    let desc = build_delta::<C>(rootfs_path, &oci, Some(pfs), &mut verity_data)?;
     let br = BlobRef {
         kind: BlobRefKind::Other {
             digest: desc.digest.underlying(),
@@ -568,7 +564,7 @@ pub fn enable_fs_verity(oci: Image, tag: &str, manifest_root_hash: &str) -> Resu
 
 // TODO: figure out how to guard this with #[cfg(test)]
 pub fn build_test_fs(path: &Path, image: &Image) -> Result<Descriptor> {
-    build_initial_rootfs(path, image)
+    build_initial_rootfs::<compression::Noop>(path, image)
 }
 
 #[cfg(test)]
@@ -580,9 +576,13 @@ pub mod tests {
     use tempfile::tempdir;
 
     use format::{DirList, InodeMode};
+    use oci::Digest;
     use reader::WalkPuzzleFS;
+    use std::convert::TryFrom;
     use std::path::PathBuf;
     use tempfile::TempDir;
+
+    type DefaultCompression = compression::Noop;
 
     #[test]
     fn test_fs_generation() {
@@ -608,6 +608,13 @@ pub mod tests {
 
         let md = fs::symlink_metadata(image.blob_path().join(FILE_DIGEST)).unwrap();
         assert!(md.is_file());
+
+        let mut decompressor = image
+            .open_compressed_blob::<DefaultCompression>(
+                &Digest::try_from(FILE_DIGEST).unwrap(),
+                None,
+            )
+            .unwrap();
 
         let metadata_digest = rootfs.metadatas[0].try_into().unwrap();
         let mut blob = image.open_metadata_blob(&metadata_digest, None).unwrap();
@@ -637,7 +644,10 @@ pub mod tests {
         if let InodeMode::Reg { offset } = inodes[1].mode {
             let chunks = blob.read_file_chunks(offset).unwrap();
             assert_eq!(chunks.len(), 1);
-            assert_eq!(chunks[0].len, md.len());
+            assert_eq!(
+                chunks[0].len,
+                decompressor.get_uncompressed_length().unwrap()
+            );
         } else {
             panic!("bad inode mode: {:?}", inodes[1].mode);
         }
@@ -659,7 +669,7 @@ pub mod tests {
         )
         .unwrap();
 
-        let (desc, image) = add_rootfs_delta(&delta_dir, image, tag).unwrap();
+        let (desc, image) = add_rootfs_delta::<DefaultCompression>(&delta_dir, image, tag).unwrap();
         let new_tag = "test2";
         image.add_tag(new_tag, desc).unwrap();
         let delta = image

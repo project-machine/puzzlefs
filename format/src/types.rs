@@ -21,6 +21,7 @@ use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::error::{Result, WireFormatError};
+use hex::FromHexError;
 
 mod cbor_helpers;
 use cbor_helpers::cbor_get_array_size;
@@ -707,6 +708,17 @@ impl Serialize for Digest {
     {
         let val = format!("sha256:{}", hex::encode(self.0));
         serializer.serialize_str(&val)
+    }
+}
+
+impl TryFrom<&str> for Digest {
+    type Error = FromHexError;
+    fn try_from(s: &str) -> std::result::Result<Self, Self::Error> {
+        let digest = hex::decode(s)?;
+        let digest: [u8; SHA256_BLOCK_SIZE] = digest
+            .try_into()
+            .map_err(|_| FromHexError::InvalidStringLength)?;
+        Ok(Digest(digest))
     }
 }
 

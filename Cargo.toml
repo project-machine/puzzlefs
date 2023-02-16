@@ -8,5 +8,6 @@ members = [
     "reader",
     "compression",
     "extractor",
-    "fsverity_helpers"
+    "fsverity_helpers",
+    "common"
 ]
