@@ -567,7 +567,7 @@ pub fn enable_fs_verity(oci: Image, tag: &str, manifest_root_hash: &str) -> Resu
 
 // TODO: figure out how to guard this with #[cfg(test)]
 pub fn build_test_fs(path: &Path, image: &Image) -> Result<Descriptor> {
-    build_initial_rootfs::<compression::Noop>(path, image)
+    build_initial_rootfs::<compression::Zstd>(path, image)
 }
 
 #[cfg(test)]
@@ -585,7 +585,7 @@ pub mod tests {
     use std::path::PathBuf;
     use tempfile::TempDir;
 
-    type DefaultCompression = compression::Noop;
+    type DefaultCompression = compression::Zstd;
 
     #[test]
     fn test_fs_generation() {
@@ -607,7 +607,7 @@ pub mod tests {
         // there should be a blob that matches the hash of the test data, since it all gets input
         // as one chunk and there's only one file
         const FILE_DIGEST: &str =
-            "d9e749d9367fc908876749d6502eb212fee88c9a94892fb07da5ef3ba8bc39ed";
+            "a7b1fbc3c77f9ffc40c051e3608d607d63eebcd23c559958043eccb64bdab7ff";
 
         let md = fs::symlink_metadata(image.blob_path().join(FILE_DIGEST)).unwrap();
         assert!(md.is_file());
