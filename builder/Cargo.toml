@@ -13,6 +13,8 @@ walkdir = "2"
 serde_cbor = "*"
 fastcdc = "3.0.0"
 nix = "*"
+fs-verity="0.1.0"
+sha2 = "*"
 
 [dev-dependencies]
 tempfile = "*"

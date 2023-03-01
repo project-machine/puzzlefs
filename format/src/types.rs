@@ -1,5 +1,6 @@
 extern crate serde_cbor;
 extern crate xattr;
+use std::collections::BTreeMap;
 
 use std::backtrace::Backtrace;
 use std::convert::TryInto;
@@ -45,6 +46,9 @@ struct Blob {
 }
 */
 
+pub const SHA256_BLOCK_SIZE: usize = 32;
+pub type VerityData = BTreeMap<[u8; SHA256_BLOCK_SIZE], [u8; SHA256_BLOCK_SIZE]>;
+
 fn read_one<'a, T: Deserialize<'a>, R: Read>(r: R) -> Result<T> {
     // serde complains when we leave extra bytes on the wire, which we often want to do. as a
     // hack, we create a streaming deserializer for the type we're about to read, and then only
@@ -57,6 +61,7 @@ fn read_one<'a, T: Deserialize<'a>, R: Read>(r: R) -> Result<T> {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Rootfs {
     pub metadatas: Vec<BlobRef>,
+    pub fs_verity_data: VerityData,
 }
 
 impl Rootfs {
