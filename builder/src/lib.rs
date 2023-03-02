@@ -1,20 +1,23 @@
-use fs_verity::FsVeritySha256;
+use fsverity_helpers::{
+    check_fs_verity, fsverity_enable, get_fs_verity_digest, InnerHashAlgorithm,
+    FS_VERITY_BLOCK_SIZE_DEFAULT,
+};
+use oci::Digest;
 use std::cmp::min;
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io;
-use std::io::Write;
+use std::os::fd::AsRawFd;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::sync::Arc;
 
-use sha2::digest::FixedOutput;
 use walkdir::WalkDir;
 
 use format::{
     BlobRef, BlobRefKind, DirEnt, DirList, FileChunk, FileChunkList, Ino, Inode, InodeAdditional,
-    Result, Rootfs, VerityData, WireFormatError, SHA256_BLOCK_SIZE,
+    Result, Rootfs, VerityData, WireFormatError,
 };
 use oci::media_types;
 use oci::{Descriptor, Image};
@@ -68,13 +71,6 @@ struct Other {
     ino: u64,
     md: fs::Metadata,
     additional: Option<InodeAdditional>,
-}
-
-fn get_fs_verity_digest(data: &[u8]) -> Result<[u8; SHA256_BLOCK_SIZE]> {
-    let mut digest = FsVeritySha256::new();
-    digest.write_all(data)?;
-    let result = digest.finalize_fixed();
-    Ok(result.into())
 }
 
 fn process_chunks(
@@ -504,6 +500,48 @@ pub fn add_rootfs_delta(rootfs: &Path, oci: Image, tag: &str) -> Result<(Descrip
         oci.put_blob::<_, compression::Noop, media_types::Rootfs>(rootfs_buf.as_slice())?,
         oci,
     ))
+}
+
+pub fn enable_fs_verity(oci: Image, tag: &str, manifest_root_hash: &str) -> Result<()> {
+    // first enable fs verity for the puzzlefs image manifest
+    let manifest_fd = oci.get_image_manifest_fd(tag)?;
+    if let Err(e) = fsverity_enable(
+        manifest_fd.as_raw_fd(),
+        FS_VERITY_BLOCK_SIZE_DEFAULT,
+        InnerHashAlgorithm::Sha256,
+        &[],
+    ) {
+        // if fsverity is enabled, ignore the error
+        if e.kind() != std::io::ErrorKind::AlreadyExists {
+            return Err(WireFormatError::from(e));
+        }
+    }
+    check_fs_verity(&manifest_fd, &hex::decode(manifest_root_hash)?[..])?;
+
+    let pfs = PuzzleFS::open(oci, tag)?;
+    let oci = Arc::clone(&pfs.oci);
+    let rootfs = oci.open_rootfs_blob::<compression::Noop>(tag)?;
+
+    for (content_addressed_file, verity_hash) in rootfs.fs_verity_data {
+        let file_path = oci
+            .blob_path()
+            .join(Digest::new(&content_addressed_file).to_string());
+        let fd = std::fs::File::open(file_path)?;
+        if let Err(e) = fsverity_enable(
+            fd.as_raw_fd(),
+            FS_VERITY_BLOCK_SIZE_DEFAULT,
+            InnerHashAlgorithm::Sha256,
+            &[],
+        ) {
+            // if fsverity is enabled, ignore the error
+            if e.kind() != std::io::ErrorKind::AlreadyExists {
+                return Err(WireFormatError::from(e));
+            }
+        }
+        check_fs_verity(&fd, &verity_hash)?;
+    }
+
+    Ok(())
 }
 
 // TODO: figure out how to guard this with #[cfg(test)]

@@ -1,0 +1,15 @@
+[package]
+name = "fsverity_helpers"
+version = "0.1.0"
+authors = ["Ariel Miculas <amiculas@cisco.com>"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+format = { path = "../format" }
+compression = { path = "../compression" }
+# Use https://crates.io/crates/fs-verity when https://github.com/rvolgers/fs-verity-rs/pull/2 gets merged
+fs-verity = { git = "https://github.com/ariel-miculas/fs-verity-rs.git" }
+hex = "*"
+sha2 = "*"

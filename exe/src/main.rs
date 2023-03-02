@@ -1,4 +1,4 @@
-use builder::{add_rootfs_delta, build_initial_rootfs};
+use builder::{add_rootfs_delta, build_initial_rootfs, enable_fs_verity};
 use clap::{Args, Parser, Subcommand};
 use daemonize::Daemonize;
 use env_logger::Env;
@@ -24,6 +24,7 @@ enum SubCommand {
     Build(Build),
     Mount(Mount),
     Extract(Extract),
+    EnableFsVerity(FsVerity),
 }
 
 #[derive(Args)]
@@ -53,6 +54,13 @@ struct Extract {
     oci_dir: String,
     tag: String,
     extract_dir: String,
+}
+
+#[derive(Args)]
+struct FsVerity {
+    oci_dir: String,
+    tag: String,
+    root_hash: String,
 }
 
 // set default log level when RUST_LOG environment variable is not set
@@ -174,6 +182,13 @@ fn main() -> anyhow::Result<()> {
         SubCommand::Extract(e) => {
             init_logging("info");
             extract_rootfs(&e.oci_dir, &e.tag, &e.extract_dir)
+        }
+        SubCommand::EnableFsVerity(v) => {
+            let oci_dir = Path::new(&v.oci_dir);
+            let oci_dir = fs::canonicalize(oci_dir)?;
+            let image = Image::open(&oci_dir)?;
+            enable_fs_verity(image, &v.tag, &v.root_hash)?;
+            Ok(())
         }
     }
 }

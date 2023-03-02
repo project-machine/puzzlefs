@@ -83,13 +83,13 @@ dependencies = [
  "fastcdc",
  "fastrand",
  "format",
- "fs-verity",
+ "fsverity_helpers",
+ "hex",
  "nix",
  "oci",
  "reader",
  "serde",
  "serde_cbor",
- "sha2",
  "tempfile",
  "walkdir",
 ]
@@ -359,6 +359,7 @@ name = "format"
 version = "0.1.0"
 dependencies = [
  "compression",
+ "hex",
  "nix",
  "serde",
  "serde_cbor",
@@ -370,13 +371,23 @@ dependencies = [
 [[package]]
 name = "fs-verity"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6609a185ec12e97e54058bc301ccad97b68947fbe22ecaf14064a350ac7905e"
+source = "git+https://github.com/ariel-miculas/fs-verity-rs.git#d9a79efab69a255a655654838d1ac855d8282b2b"
 dependencies = [
  "hex",
  "libc",
  "num_enum",
  "parse-display",
+ "sha2",
+]
+
+[[package]]
+name = "fsverity_helpers"
+version = "0.1.0"
+dependencies = [
+ "compression",
+ "format",
+ "fs-verity",
+ "hex",
  "sha2",
 ]
 
@@ -795,6 +806,8 @@ dependencies = [
  "env_logger",
  "extractor",
  "format",
+ "fsverity_helpers",
+ "hex",
  "log",
  "nix",
  "oci",

@@ -119,6 +119,15 @@ impl Image {
         Ok(MetadataBlob::new(f))
     }
 
+    pub fn get_image_manifest_fd(&self, tag: &str) -> Result<fs::File> {
+        let index = self.get_index()?;
+        let desc = index
+            .find_tag(tag)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("no tag {tag}")))?;
+        let file = self.open_raw_blob(&desc.digest)?;
+        Ok(file)
+    }
+
     pub fn open_rootfs_blob<C: Compression>(&self, tag: &str) -> Result<Rootfs> {
         let index = self.get_index()?;
         let desc = index
