@@ -475,7 +475,7 @@ impl Filesystem for Fuse {
                 reply.entry(&ttl, &attr, generation)
             }
             Err(e) => {
-                debug!("cannot lookup parent: {parent}, name {name:?}!");
+                debug!("cannot lookup parent: {parent}, name {name:?} {e}!");
                 reply.error(e.to_errno());
             }
         }
@@ -489,7 +489,7 @@ impl Filesystem for Fuse {
                 reply.attr(&ttl, &attr)
             }
             Err(e) => {
-                debug!("cannot getattr for ino {ino}!");
+                debug!("cannot getattr for ino {ino} {e}!");
                 reply.error(e.to_errno())
             }
         }
@@ -499,7 +499,7 @@ impl Filesystem for Fuse {
         match self._readlink(ino) {
             Ok(symlink) => reply.data(symlink.as_bytes()),
             Err(e) => {
-                debug!("cannot readlink ino: {ino}!");
+                debug!("cannot readlink ino: {ino} {e}!");
                 reply.error(e.to_errno())
             }
         }
@@ -525,7 +525,7 @@ impl Filesystem for Fuse {
         match self._read(ino, uoffset, size) {
             Ok(data) => reply.data(data.as_slice()),
             Err(e) => {
-                debug!("cannot read ino {ino}, offset: {uoffset}!");
+                debug!("cannot read ino {ino}, offset: {uoffset} {e}!");
                 reply.error(e.to_errno())
             }
         }
@@ -560,7 +560,7 @@ impl Filesystem for Fuse {
         match self._readdir(ino, offset, &mut reply) {
             Ok(_) => reply.ok(),
             Err(e) => {
-                debug!("cannot readdir ino: {ino}, offset {offset}!");
+                debug!("cannot readdir ino: {ino}, offset {offset} {e}!");
                 reply.error(e.to_errno())
             }
         }
@@ -614,7 +614,7 @@ impl Filesystem for Fuse {
                 }
             }
             Err(e) => {
-                debug!("cannot getxattr, ino: {ino}, name {name:?}!");
+                debug!("cannot getxattr, ino: {ino}, name {name:?} {e}!");
                 reply.error(e.to_errno())
             }
         }
@@ -636,7 +636,7 @@ impl Filesystem for Fuse {
                 }
             }
             Err(e) => {
-                debug!("cannot listxattr, ino {ino}, size {size}!");
+                debug!("cannot listxattr, ino {ino}, size {size} {e}!");
                 reply.error(e.to_errno())
             }
         }
