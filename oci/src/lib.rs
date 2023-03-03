@@ -1,5 +1,6 @@
 extern crate hex;
 
+use fsverity_helpers::check_fs_verity;
 use std::backtrace::Backtrace;
 use std::convert::TryFrom;
 use std::fs;
@@ -13,7 +14,7 @@ use tee::TeeReader;
 use tempfile::NamedTempFile;
 
 use compression::{Compression, Decompressor};
-use format::{MetadataBlob, Result, Rootfs, WireFormatError};
+use format::{MetadataBlob, Result, Rootfs, VerityData, WireFormatError};
 use openat::Dir;
 
 mod descriptor;
@@ -101,21 +102,31 @@ impl Image {
         Ok(descriptor)
     }
 
-    fn open_raw_blob(&self, digest: &Digest) -> io::Result<fs::File> {
-        self.oci_dir_fd
-            .open_file(&self.blob_path_relative().join(digest.to_string()))
+    fn open_raw_blob(&self, digest: &Digest, verity: Option<&[u8]>) -> io::Result<fs::File> {
+        let file = self
+            .oci_dir_fd
+            .open_file(&self.blob_path_relative().join(digest.to_string()))?;
+        if let Some(verity) = verity {
+            check_fs_verity(&file, verity).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        }
+        Ok(file)
     }
 
     pub fn open_compressed_blob<C: Compression>(
         &self,
         digest: &Digest,
+        verity: Option<&[u8]>,
     ) -> io::Result<Box<dyn Decompressor>> {
-        let f = self.open_raw_blob(digest)?;
+        let f = self.open_raw_blob(digest, verity)?;
         Ok(C::decompress(f))
     }
 
-    pub fn open_metadata_blob(&self, digest: &Digest) -> io::Result<MetadataBlob> {
-        let f = self.open_raw_blob(digest)?;
+    pub fn open_metadata_blob(
+        &self,
+        digest: &Digest,
+        verity: Option<&[u8]>,
+    ) -> io::Result<MetadataBlob> {
+        let f = self.open_raw_blob(digest, verity)?;
         Ok(MetadataBlob::new(f))
     }
 
@@ -124,16 +135,20 @@ impl Image {
         let desc = index
             .find_tag(tag)
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("no tag {tag}")))?;
-        let file = self.open_raw_blob(&desc.digest)?;
+        let file = self.open_raw_blob(&desc.digest, None)?;
         Ok(file)
     }
 
-    pub fn open_rootfs_blob<C: Compression>(&self, tag: &str) -> Result<Rootfs> {
+    pub fn open_rootfs_blob<C: Compression>(
+        &self,
+        tag: &str,
+        verity: Option<&[u8]>,
+    ) -> Result<Rootfs> {
         let index = self.get_index()?;
         let desc = index
             .find_tag(tag)
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("no tag {tag}")))?;
-        let rootfs = Rootfs::open(self.open_compressed_blob::<C>(&desc.digest)?)?;
+        let rootfs = Rootfs::open(self.open_compressed_blob::<C>(&desc.digest, verity)?)?;
         Ok(rootfs)
     }
 
@@ -142,9 +157,23 @@ impl Image {
         chunk: format::BlobRef,
         addl_offset: u64,
         buf: &mut [u8],
+        verity_data: &Option<VerityData>,
     ) -> format::Result<usize> {
         let digest = &<Digest>::try_from(chunk)?;
-        let mut blob = self.open_raw_blob(digest)?;
+        let file_verity;
+        if let Some(verity) = verity_data {
+            file_verity = Some(
+                &verity
+                    .get(&digest.underlying())
+                    .ok_or(WireFormatError::InvalidFsVerityData(
+                        format!("missing verity data {digest}"),
+                        Backtrace::capture(),
+                    ))?[..],
+            );
+        } else {
+            file_verity = None;
+        }
+        let mut blob = self.open_raw_blob(digest, file_verity)?;
         blob.seek(io::SeekFrom::Start(chunk.offset + addl_offset))?;
         let n = blob.read(buf)?;
         Ok(n)
@@ -160,7 +189,7 @@ impl Image {
 
     pub fn add_tag(&self, name: String, mut desc: Descriptor) -> Result<()> {
         // check that the blob exists...
-        self.open_raw_blob(&desc.digest)?;
+        self.open_raw_blob(&desc.digest, None)?;
 
         let mut index = self.get_index().unwrap_or_default();
 

@@ -371,7 +371,7 @@ dependencies = [
 [[package]]
 name = "fs-verity"
 version = "0.1.0"
-source = "git+https://github.com/ariel-miculas/fs-verity-rs.git#d9a79efab69a255a655654838d1ac855d8282b2b"
+source = "git+https://github.com/ariel-miculas/fs-verity-rs.git#d077fb3a0b25eb7186daff3750ddd7dccad5a5eb"
 dependencies = [
  "hex",
  "libc",
@@ -622,6 +622,7 @@ version = "0.1.0"
 dependencies = [
  "compression",
  "format",
+ "fsverity_helpers",
  "hex",
  "log",
  "openat",

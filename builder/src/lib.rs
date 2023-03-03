@@ -482,10 +482,10 @@ pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Descriptor> {
 // representation from the tag is.
 pub fn add_rootfs_delta(rootfs: &Path, oci: Image, tag: &str) -> Result<(Descriptor, Arc<Image>)> {
     let mut verity_data: VerityData = BTreeMap::new();
-    let pfs = PuzzleFS::open(oci, tag)?;
+    let pfs = PuzzleFS::open(oci, tag, None)?;
     let oci = Arc::clone(&pfs.oci);
     let desc = build_delta(rootfs, &oci, Some(pfs), &mut verity_data)?;
-    let mut rootfs = oci.open_rootfs_blob::<compression::Noop>(tag)?;
+    let mut rootfs = oci.open_rootfs_blob::<compression::Noop>(tag, None)?;
     let br = BlobRef {
         kind: BlobRefKind::Other {
             digest: desc.digest.underlying(),
@@ -518,9 +518,9 @@ pub fn enable_fs_verity(oci: Image, tag: &str, manifest_root_hash: &str) -> Resu
     }
     check_fs_verity(&manifest_fd, &hex::decode(manifest_root_hash)?[..])?;
 
-    let pfs = PuzzleFS::open(oci, tag)?;
+    let pfs = PuzzleFS::open(oci, tag, None)?;
     let oci = Arc::clone(&pfs.oci);
-    let rootfs = oci.open_rootfs_blob::<compression::Noop>(tag)?;
+    let rootfs = oci.open_rootfs_blob::<compression::Noop>(tag, None)?;
 
     for (content_addressed_file, verity_hash) in rootfs.fs_verity_data {
         let file_path = oci
@@ -574,7 +574,7 @@ pub mod tests {
         let rootfs_desc = build_test_fs(Path::new("../builder/test/test-1"), &image).unwrap();
         let rootfs = Rootfs::open(
             image
-                .open_compressed_blob::<compression::Noop>(&rootfs_desc.digest)
+                .open_compressed_blob::<compression::Noop>(&rootfs_desc.digest, None)
                 .unwrap(),
         )
         .unwrap();
@@ -588,7 +588,7 @@ pub mod tests {
         assert!(md.is_file());
 
         let metadata_digest = rootfs.metadatas[0].try_into().unwrap();
-        let mut blob = image.open_metadata_blob(&metadata_digest).unwrap();
+        let mut blob = image.open_metadata_blob(&metadata_digest, None).unwrap();
         let inodes = blob.read_inodes().unwrap();
 
         // we can at least deserialize inodes and they look sane
@@ -641,12 +641,12 @@ pub mod tests {
         let new_tag = "test2".to_string();
         image.add_tag(new_tag.to_string(), desc).unwrap();
         let delta = image
-            .open_rootfs_blob::<compression::Noop>(&new_tag)
+            .open_rootfs_blob::<compression::Noop>(&new_tag, None)
             .unwrap();
         assert_eq!(delta.metadatas.len(), 2);
 
         let image = Image::new(dir.path()).unwrap();
-        let mut pfs = PuzzleFS::open(image, &new_tag).unwrap();
+        let mut pfs = PuzzleFS::open(image, &new_tag, None).unwrap();
         assert_eq!(pfs.max_inode().unwrap(), 3);
         let mut walker = WalkPuzzleFS::walk(&mut pfs).unwrap();
 

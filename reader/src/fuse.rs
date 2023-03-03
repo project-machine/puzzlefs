@@ -115,7 +115,13 @@ impl Fuse {
     fn _read(&mut self, ino: u64, offset: u64, size: u32) -> Result<Vec<u8>> {
         let inode = self.pfs.find_inode(ino)?;
         let mut buf = vec![0_u8; size as usize];
-        let read = file_read(&self.pfs.oci, &inode, offset as usize, &mut buf)?;
+        let read = file_read(
+            &self.pfs.oci,
+            &inode,
+            offset as usize,
+            &mut buf,
+            &self.pfs.verity_data,
+        )?;
         buf.truncate(read);
         Ok(buf)
     }
@@ -677,6 +683,7 @@ mod tests {
             "test",
             Path::new(mountpoint.path()),
             &[],
+            None,
             None,
             None,
         )

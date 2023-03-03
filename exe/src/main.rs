@@ -47,6 +47,8 @@ struct Mount {
     init_pipe: Option<String>,
     #[arg(short, value_delimiter = ',')]
     options: Option<Vec<String>>,
+    #[arg(short, long, value_name = "fs verity root digest")]
+    digest: Option<String>,
 }
 
 #[derive(Args)]
@@ -127,9 +129,11 @@ fn main() -> anyhow::Result<()> {
 
             let oci_dir = Path::new(&m.oci_dir);
             let oci_dir = fs::canonicalize(oci_dir)?;
-            let image = Image::new(&oci_dir)?;
+            let image = Image::open(&oci_dir)?;
             let mountpoint = Path::new(&m.mountpoint);
             let mountpoint = fs::canonicalize(mountpoint)?;
+
+            let manifest_verity = m.digest.map(hex::decode).transpose()?;
 
             if m.foreground {
                 let (send, recv) = std::sync::mpsc::channel();
@@ -150,6 +154,7 @@ fn main() -> anyhow::Result<()> {
                     m.init_pipe
                         .map(|x| PipeDescriptor::NamedPipe(PathBuf::from(x))),
                     Some(fuse_thread_finished),
+                    manifest_verity.as_deref(),
                 )?;
                 // This blocks until either ctrl-c is pressed or the filesystem is unmounted
                 let () = recv.recv().unwrap();
@@ -171,6 +176,7 @@ fn main() -> anyhow::Result<()> {
                             &mountpoint,
                             &m.options.unwrap_or_default()[..],
                             Some(PipeDescriptor::UnnamedPipe(init_notify)),
+                            manifest_verity.as_deref(),
                         )?;
                     }
                     Err(e) => eprintln!("Error, {e}"),

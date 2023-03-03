@@ -89,7 +89,7 @@ mod tests {
         let image = Image::new(oci_dir.path()).unwrap();
         let rootfs_desc = build_test_fs(Path::new("../builder/test/test-1"), &image).unwrap();
         image.add_tag("test".to_string(), rootfs_desc).unwrap();
-        let mut pfs = PuzzleFS::open(image, "test").unwrap();
+        let mut pfs = PuzzleFS::open(image, "test", None).unwrap();
 
         let mut walker = WalkPuzzleFS::walk(&mut pfs).unwrap();
 
@@ -129,7 +129,7 @@ mod tests {
         let rootfs_desc = build_initial_rootfs(&rootfs, &image).unwrap();
 
         image.add_tag("test".to_string(), rootfs_desc).unwrap();
-        let mut pfs = PuzzleFS::open(image, "test").unwrap();
+        let mut pfs = PuzzleFS::open(image, "test", None).unwrap();
 
         let mut walker = WalkPuzzleFS::walk(&mut pfs).unwrap();
 
