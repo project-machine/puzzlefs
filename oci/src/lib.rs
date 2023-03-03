@@ -16,6 +16,7 @@ use tempfile::NamedTempFile;
 use compression::{Compression, Decompressor};
 use format::{MetadataBlob, Result, Rootfs, VerityData, WireFormatError};
 use openat::Dir;
+use std::io::{Error, ErrorKind};
 
 mod descriptor;
 pub use descriptor::{Descriptor, Digest};
@@ -96,9 +97,24 @@ impl Image {
         let digest = hasher.finalize();
         let media_type = C::append_extension(MT::name());
         let descriptor = Descriptor::new(digest.into(), size, media_type);
+        let path = self.blob_path().join(descriptor.digest.to_string());
 
-        tmp.persist(self.blob_path().join(descriptor.digest.to_string()))
-            .map_err(|e| e.error)?;
+        // avoid replacing the data blob so we don't drop fsverity data
+        if path.exists() {
+            let mut hasher = Sha256::new();
+            let mut file = fs::File::open(path)?;
+            io::copy(&mut file, &mut hasher)?;
+            let existing_digest = hasher.finalize();
+            if existing_digest != digest {
+                return Err(Error::new(
+                    ErrorKind::AlreadyExists,
+                    "blob already exists and it's not content addressable",
+                )
+                .into());
+            }
+        } else {
+            tmp.persist(path).map_err(|e| e.error)?;
+        }
         Ok(descriptor)
     }
 
