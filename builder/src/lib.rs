@@ -492,7 +492,11 @@ pub fn add_rootfs_delta(rootfs: &Path, oci: Image, tag: &str) -> Result<(Descrip
         },
         offset: 0,
     };
-    rootfs.metadatas.insert(0, br);
+
+    if !rootfs.metadatas.iter().any(|&x| x == br) {
+        rootfs.metadatas.insert(0, br);
+    }
+
     rootfs.fs_verity_data.extend(verity_data);
     let mut rootfs_buf = Vec::new();
     serde_cbor::to_writer(&mut rootfs_buf, &rootfs)?;
