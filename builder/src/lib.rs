@@ -630,8 +630,8 @@ pub mod tests {
         let dir = tempdir().unwrap();
         let image = Image::new(dir.path()).unwrap();
         let rootfs_desc = build_test_fs(Path::new("../builder/test/test-1"), &image).unwrap();
-        let tag = "test".to_string();
-        image.add_tag(tag.to_string(), rootfs_desc).unwrap();
+        let tag = "test";
+        image.add_tag(tag, rootfs_desc).unwrap();
 
         let delta_dir = dir.path().join(Path::new("delta"));
         fs::create_dir_all(delta_dir.join(Path::new("foo"))).unwrap();
@@ -641,16 +641,16 @@ pub mod tests {
         )
         .unwrap();
 
-        let (desc, image) = add_rootfs_delta(&delta_dir, image, &tag).unwrap();
-        let new_tag = "test2".to_string();
-        image.add_tag(new_tag.to_string(), desc).unwrap();
+        let (desc, image) = add_rootfs_delta(&delta_dir, image, tag).unwrap();
+        let new_tag = "test2";
+        image.add_tag(new_tag, desc).unwrap();
         let delta = image
-            .open_rootfs_blob::<compression::Noop>(&new_tag, None)
+            .open_rootfs_blob::<compression::Noop>(new_tag, None)
             .unwrap();
         assert_eq!(delta.metadatas.len(), 2);
 
         let image = Image::new(dir.path()).unwrap();
-        let mut pfs = PuzzleFS::open(image, &new_tag, None).unwrap();
+        let mut pfs = PuzzleFS::open(image, new_tag, None).unwrap();
         assert_eq!(pfs.max_inode().unwrap(), 3);
         let mut walker = WalkPuzzleFS::walk(&mut pfs).unwrap();
 

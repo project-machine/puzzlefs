@@ -197,7 +197,7 @@ mod tests {
 
         let rootfs_desc = build_initial_rootfs(&rootfs, &image).unwrap();
 
-        image.add_tag("test".to_string(), rootfs_desc).unwrap();
+        image.add_tag("test", rootfs_desc).unwrap();
 
         extract_rootfs(
             oci_dir.to_str().unwrap(),
@@ -248,7 +248,7 @@ mod tests {
 
         let rootfs_desc = build_initial_rootfs(&rootfs, &image).unwrap();
 
-        image.add_tag("test".to_string(), rootfs_desc).unwrap();
+        image.add_tag("test", rootfs_desc).unwrap();
 
         extract_rootfs(
             oci_dir.to_str().unwrap(),
@@ -287,7 +287,7 @@ mod tests {
 
         let rootfs_desc = build_initial_rootfs(&rootfs, &image).unwrap();
 
-        image.add_tag("test".to_string(), rootfs_desc).unwrap();
+        image.add_tag("test", rootfs_desc).unwrap();
 
         extract_rootfs(
             oci_dir.to_str().unwrap(),
@@ -318,7 +318,7 @@ mod tests {
         std::fs::File::create(foo).unwrap();
 
         let rootfs_desc = build_test_fs(&rootfs, &image).unwrap();
-        image.add_tag("test".to_string(), rootfs_desc).unwrap();
+        image.add_tag("test", rootfs_desc).unwrap();
 
         extract_rootfs(
             oci_dir.to_str().unwrap(),

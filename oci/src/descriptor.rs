@@ -23,8 +23,9 @@ impl Descriptor {
         }
     }
 
-    pub fn set_name(&mut self, name: String) {
-        self.annotations.insert(NAME_ANNOTATION.to_string(), name);
+    pub fn set_name(&mut self, name: &str) {
+        self.annotations
+            .insert(NAME_ANNOTATION.to_string(), name.into());
     }
 
     pub fn get_name(&self) -> Option<&String> {

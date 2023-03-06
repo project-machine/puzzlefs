@@ -300,7 +300,7 @@ mod tests {
         let oci_dir = tempdir().unwrap();
         let image = Image::new(oci_dir.path()).unwrap();
         let rootfs_desc = build_test_fs(Path::new("../builder/test/test-1"), &image).unwrap();
-        image.add_tag("test".to_string(), rootfs_desc).unwrap();
+        image.add_tag("test", rootfs_desc).unwrap();
         let mut pfs = PuzzleFS::open(image, "test", None).unwrap();
 
         let inode = pfs.find_inode(2).unwrap();
@@ -321,7 +321,7 @@ mod tests {
         let oci_dir = tempdir().unwrap();
         let image = Image::new(oci_dir.path()).unwrap();
         let rootfs_desc = build_test_fs(Path::new("../builder/test/test-1"), &image).unwrap();
-        image.add_tag("test".to_string(), rootfs_desc).unwrap();
+        image.add_tag("test", rootfs_desc).unwrap();
         let mut pfs = PuzzleFS::open(image, "test", None).unwrap();
 
         assert_eq!(pfs.lookup(Path::new("/")).unwrap().unwrap().inode.ino, 1);

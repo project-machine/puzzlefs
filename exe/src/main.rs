@@ -3,6 +3,7 @@ use clap::{Args, Parser, Subcommand};
 use daemonize::Daemonize;
 use env_logger::Env;
 use extractor::extract_rootfs;
+use fsverity_helpers::get_fs_verity_digest;
 use log::{info, LevelFilter};
 use oci::Image;
 use reader::fuse::PipeDescriptor;
@@ -10,6 +11,7 @@ use reader::{mount, spawn_mount};
 use std::fs;
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use syslog::{BasicLogger, Facility, Formatter3164};
 
 #[derive(Parser)]
@@ -108,16 +110,27 @@ fn main() -> anyhow::Result<()> {
             let rootfs = Path::new(&b.rootfs);
             let oci_dir = Path::new(&b.oci_dir);
             let image = Image::new(oci_dir)?;
-            match b.base_layer {
+            let new_image = match b.base_layer {
                 Some(base_layer) => {
                     let (desc, image) = add_rootfs_delta(rootfs, image, &base_layer)?;
-                    image.add_tag(b.tag, desc).map_err(|e| e.into())
+                    image.add_tag(&b.tag, desc)?;
+                    image
                 }
                 None => {
                     let desc = build_initial_rootfs(rootfs, &image)?;
-                    image.add_tag(b.tag, desc).map_err(|e| e.into())
+                    image.add_tag(&b.tag, desc)?;
+                    Arc::new(image)
                 }
-            }
+            };
+            let mut manifest_fd = new_image.get_image_manifest_fd(&b.tag)?;
+            let mut read_buffer = Vec::new();
+            manifest_fd.read_to_end(&mut read_buffer)?;
+            let manifest_digest = get_fs_verity_digest(&read_buffer)?;
+            println!(
+                "puzzlefs image manifest digest: {}",
+                hex::encode(manifest_digest)
+            );
+            Ok(())
         }
         SubCommand::Mount(m) => {
             let log_level = "info";

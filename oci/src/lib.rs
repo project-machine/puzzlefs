@@ -203,7 +203,7 @@ impl Image {
         i.write(&self.oci_dir.join(index::PATH))
     }
 
-    pub fn add_tag(&self, name: String, mut desc: Descriptor) -> Result<()> {
+    pub fn add_tag(&self, name: &str, mut desc: Descriptor) -> Result<()> {
         // check that the blob exists...
         self.open_raw_blob(&desc.digest, None)?;
 
@@ -212,7 +212,7 @@ impl Image {
         // untag anything that has this tag
         for m in index.manifests.iter_mut() {
             if m.get_name()
-                .map(|existing_tag| existing_tag == &name)
+                .map(|existing_tag| existing_tag == name)
                 .unwrap_or(false)
             {
                 m.remove_name()
@@ -259,7 +259,7 @@ mod tests {
         let mut desc = image
             .put_blob::<_, compression::Noop, media_types::Chunk>("meshuggah rocks".as_bytes())
             .unwrap();
-        desc.set_name("foo".to_string());
+        desc.set_name("foo");
         let mut index = Index::default();
         // TODO: make a real API for this that checks that descriptor has a name?
         index.manifests.push(desc);
