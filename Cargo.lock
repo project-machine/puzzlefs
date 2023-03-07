@@ -816,6 +816,7 @@ dependencies = [
  "reader",
  "syslog",
  "tempfile",
+ "walkdir",
 ]
 
 [[package]]
