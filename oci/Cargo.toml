@@ -13,6 +13,7 @@ tee = "*"
 tempfile = "*"
 compression = { path = "../compression" }
 format = { path = "../format" }
+fsverity_helpers = { path = "../fsverity_helpers" }
 serde = { version = "^1.0.27", features = [ "derive" ] }
 serde_json = "*"
 log = "0.4.17"

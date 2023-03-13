@@ -1,8 +1,14 @@
+use fsverity_helpers::{
+    check_fs_verity, fsverity_enable, get_fs_verity_digest, InnerHashAlgorithm,
+    FS_VERITY_BLOCK_SIZE_DEFAULT,
+};
+use oci::Digest;
 use std::cmp::min;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io;
+use std::os::fd::AsRawFd;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::sync::Arc;
@@ -11,7 +17,7 @@ use walkdir::WalkDir;
 
 use format::{
     BlobRef, BlobRefKind, DirEnt, DirList, FileChunk, FileChunkList, Ino, Inode, InodeAdditional,
-    Result, Rootfs, WireFormatError,
+    Result, Rootfs, VerityData, WireFormatError,
 };
 use oci::media_types;
 use oci::{Descriptor, Image};
@@ -67,7 +73,12 @@ struct Other {
     additional: Option<InodeAdditional>,
 }
 
-fn process_chunks(oci: &Image, mut chunker: StreamCDC, files: &mut [File]) -> Result<()> {
+fn process_chunks(
+    oci: &Image,
+    mut chunker: StreamCDC,
+    files: &mut [File],
+    verity_data: &mut VerityData,
+) -> Result<()> {
     let mut file_iter = files.iter_mut();
     let mut file_used = 0;
     let mut file = None;
@@ -86,6 +97,9 @@ fn process_chunks(oci: &Image, mut chunker: StreamCDC, files: &mut [File]) -> Re
         let blob_kind = BlobRefKind::Other {
             digest: desc.digest.underlying(),
         };
+
+        let verity_hash = get_fs_verity_digest(&chunk.data)?;
+        verity_data.insert(desc.digest.underlying(), verity_hash);
 
         while chunk_used < chunk.length as u64 {
             let room = min(
@@ -136,7 +150,12 @@ fn inode_encoded_size(num_inodes: usize) -> usize {
     format::cbor_size_of_list_header(num_inodes) + num_inodes * format::INODE_WIRE_SIZE
 }
 
-fn build_delta(rootfs: &Path, oci: &Image, mut existing: Option<PuzzleFS>) -> Result<Descriptor> {
+fn build_delta(
+    rootfs: &Path,
+    oci: &Image,
+    mut existing: Option<PuzzleFS>,
+    verity_data: &mut VerityData,
+) -> Result<Descriptor> {
     let mut dirs = HashMap::<u64, Dir>::new();
     let mut files = Vec::<File>::new();
     let mut others = Vec::<Other>::new();
@@ -321,7 +340,7 @@ fn build_delta(rootfs: &Path, oci: &Image, mut existing: Option<PuzzleFS>) -> Re
         AVG_CHUNK_SIZE,
         MAX_CHUNK_SIZE,
     );
-    process_chunks(oci, fcdc, &mut files)?;
+    process_chunks(oci, fcdc, &mut files, verity_data)?;
 
     // total inode serailized size
     let num_inodes = pfs_inodes.len() + dirs.len() + files.len() + others.len();
@@ -430,11 +449,16 @@ fn build_delta(rootfs: &Path, oci: &Image, mut existing: Option<PuzzleFS>) -> Re
     md_buf.append(&mut files_buf);
     md_buf.append(&mut others_buf);
 
-    oci.put_blob::<_, compression::Noop, media_types::Inodes>(md_buf.as_slice())
+    let desc = oci.put_blob::<_, compression::Noop, media_types::Inodes>(md_buf.as_slice())?;
+    let verity_hash = get_fs_verity_digest(md_buf.as_slice())?;
+    verity_data.insert(desc.digest.underlying(), verity_hash);
+
+    Ok(desc)
 }
 
 pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Descriptor> {
-    let desc = build_delta(rootfs, oci, None)?;
+    let mut verity_data: VerityData = BTreeMap::new();
+    let desc = build_delta(rootfs, oci, None, &mut verity_data)?;
     let metadatas = [BlobRef {
         offset: 0,
         kind: BlobRefKind::Other {
@@ -444,30 +468,84 @@ pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Descriptor> {
     .to_vec();
 
     let mut rootfs_buf = Vec::new();
-    serde_cbor::to_writer(&mut rootfs_buf, &Rootfs { metadatas })?;
+    serde_cbor::to_writer(
+        &mut rootfs_buf,
+        &Rootfs {
+            metadatas,
+            fs_verity_data: verity_data,
+        },
+    )?;
     oci.put_blob::<_, compression::Noop, media_types::Rootfs>(rootfs_buf.as_slice())
 }
 
 // add_rootfs_delta adds whatever the delta between the current rootfs and the puzzlefs
 // representation from the tag is.
 pub fn add_rootfs_delta(rootfs: &Path, oci: Image, tag: &str) -> Result<(Descriptor, Arc<Image>)> {
-    let pfs = PuzzleFS::open(oci, tag)?;
+    let mut verity_data: VerityData = BTreeMap::new();
+    let pfs = PuzzleFS::open(oci, tag, None)?;
     let oci = Arc::clone(&pfs.oci);
-    let desc = build_delta(rootfs, &oci, Some(pfs))?;
-    let mut rootfs = oci.open_rootfs_blob::<compression::Noop>(tag)?;
+    let desc = build_delta(rootfs, &oci, Some(pfs), &mut verity_data)?;
+    let mut rootfs = oci.open_rootfs_blob::<compression::Noop>(tag, None)?;
     let br = BlobRef {
         kind: BlobRefKind::Other {
             digest: desc.digest.underlying(),
         },
         offset: 0,
     };
-    rootfs.metadatas.insert(0, br);
+
+    if !rootfs.metadatas.iter().any(|&x| x == br) {
+        rootfs.metadatas.insert(0, br);
+    }
+
+    rootfs.fs_verity_data.extend(verity_data);
     let mut rootfs_buf = Vec::new();
     serde_cbor::to_writer(&mut rootfs_buf, &rootfs)?;
     Ok((
         oci.put_blob::<_, compression::Noop, media_types::Rootfs>(rootfs_buf.as_slice())?,
         oci,
     ))
+}
+
+pub fn enable_fs_verity(oci: Image, tag: &str, manifest_root_hash: &str) -> Result<()> {
+    // first enable fs verity for the puzzlefs image manifest
+    let manifest_fd = oci.get_image_manifest_fd(tag)?;
+    if let Err(e) = fsverity_enable(
+        manifest_fd.as_raw_fd(),
+        FS_VERITY_BLOCK_SIZE_DEFAULT,
+        InnerHashAlgorithm::Sha256,
+        &[],
+    ) {
+        // if fsverity is enabled, ignore the error
+        if e.kind() != std::io::ErrorKind::AlreadyExists {
+            return Err(WireFormatError::from(e));
+        }
+    }
+    check_fs_verity(&manifest_fd, &hex::decode(manifest_root_hash)?[..])?;
+
+    let pfs = PuzzleFS::open(oci, tag, None)?;
+    let oci = Arc::clone(&pfs.oci);
+    let rootfs = oci.open_rootfs_blob::<compression::Noop>(tag, None)?;
+
+    for (content_addressed_file, verity_hash) in rootfs.fs_verity_data {
+        let file_path = oci
+            .blob_path()
+            .join(Digest::new(&content_addressed_file).to_string());
+        let fd = std::fs::File::open(file_path)?;
+        if let Err(e) = fsverity_enable(
+            fd.as_raw_fd(),
+            FS_VERITY_BLOCK_SIZE_DEFAULT,
+            InnerHashAlgorithm::Sha256,
+            &[],
+        ) {
+            // if fsverity is enabled, ignore the error
+            if e.kind() != std::io::ErrorKind::AlreadyExists {
+                return Err(WireFormatError::from(e));
+            }
+        }
+        check_fs_verity(&fd, &verity_hash)?;
+    }
+
+    Ok(())
 }
 
 // TODO: figure out how to guard this with #[cfg(test)]
@@ -500,7 +578,7 @@ pub mod tests {
         let rootfs_desc = build_test_fs(Path::new("../builder/test/test-1"), &image).unwrap();
         let rootfs = Rootfs::open(
             image
-                .open_compressed_blob::<compression::Noop>(&rootfs_desc.digest)
+                .open_compressed_blob::<compression::Noop>(&rootfs_desc.digest, None)
                 .unwrap(),
         )
         .unwrap();
@@ -514,7 +592,7 @@ pub mod tests {
         assert!(md.is_file());
 
         let metadata_digest = rootfs.metadatas[0].try_into().unwrap();
-        let mut blob = image.open_metadata_blob(&metadata_digest).unwrap();
+        let mut blob = image.open_metadata_blob(&metadata_digest, None).unwrap();
         let inodes = blob.read_inodes().unwrap();
 
         // we can at least deserialize inodes and they look sane
@@ -552,8 +630,8 @@ pub mod tests {
         let dir = tempdir().unwrap();
         let image = Image::new(dir.path()).unwrap();
         let rootfs_desc = build_test_fs(Path::new("../builder/test/test-1"), &image).unwrap();
-        let tag = "test".to_string();
-        image.add_tag(tag.to_string(), rootfs_desc).unwrap();
+        let tag = "test";
+        image.add_tag(tag, rootfs_desc).unwrap();
 
         let delta_dir = dir.path().join(Path::new("delta"));
         fs::create_dir_all(delta_dir.join(Path::new("foo"))).unwrap();
@@ -563,16 +641,16 @@ pub mod tests {
         )
         .unwrap();
 
-        let (desc, image) = add_rootfs_delta(&delta_dir, image, &tag).unwrap();
-        let new_tag = "test2".to_string();
-        image.add_tag(new_tag.to_string(), desc).unwrap();
+        let (desc, image) = add_rootfs_delta(&delta_dir, image, tag).unwrap();
+        let new_tag = "test2";
+        image.add_tag(new_tag, desc).unwrap();
         let delta = image
-            .open_rootfs_blob::<compression::Noop>(&new_tag)
+            .open_rootfs_blob::<compression::Noop>(new_tag, None)
             .unwrap();
         assert_eq!(delta.metadatas.len(), 2);
 
         let image = Image::new(dir.path()).unwrap();
-        let mut pfs = PuzzleFS::open(image, &new_tag).unwrap();
+        let mut pfs = PuzzleFS::open(image, new_tag, None).unwrap();
         assert_eq!(pfs.max_inode().unwrap(), 3);
         let mut walker = WalkPuzzleFS::walk(&mut pfs).unwrap();
 

@@ -68,10 +68,10 @@ fn safe_path(dir: &Path, image_path: &Path) -> anyhow::Result<PathBuf> {
 
 pub fn extract_rootfs(oci_dir: &str, tag: &str, extract_dir: &str) -> anyhow::Result<()> {
     let oci_dir = Path::new(oci_dir);
-    let image = Image::new(oci_dir)?;
+    let image = Image::open(oci_dir)?;
     let dir = Path::new(extract_dir);
     fs::create_dir_all(dir)?;
-    let mut pfs = PuzzleFS::open(image, tag)?;
+    let mut pfs = PuzzleFS::open(image, tag, None)?;
     let mut walker = WalkPuzzleFS::walk(&mut pfs)?;
     let mut host_to_pfs = HashMap::<format::Ino, PathBuf>::new();
 
@@ -197,7 +197,7 @@ mod tests {
 
         let rootfs_desc = build_initial_rootfs(&rootfs, &image).unwrap();
 
-        image.add_tag("test".to_string(), rootfs_desc).unwrap();
+        image.add_tag("test", rootfs_desc).unwrap();
 
         extract_rootfs(
             oci_dir.to_str().unwrap(),
@@ -248,7 +248,7 @@ mod tests {
 
         let rootfs_desc = build_initial_rootfs(&rootfs, &image).unwrap();
 
-        image.add_tag("test".to_string(), rootfs_desc).unwrap();
+        image.add_tag("test", rootfs_desc).unwrap();
 
         extract_rootfs(
             oci_dir.to_str().unwrap(),
@@ -287,7 +287,7 @@ mod tests {
 
         let rootfs_desc = build_initial_rootfs(&rootfs, &image).unwrap();
 
-        image.add_tag("test".to_string(), rootfs_desc).unwrap();
+        image.add_tag("test", rootfs_desc).unwrap();
 
         extract_rootfs(
             oci_dir.to_str().unwrap(),
@@ -318,7 +318,7 @@ mod tests {
         std::fs::File::create(foo).unwrap();
 
         let rootfs_desc = build_test_fs(&rootfs, &image).unwrap();
-        image.add_tag("test".to_string(), rootfs_desc).unwrap();
+        image.add_tag("test", rootfs_desc).unwrap();
 
         extract_rootfs(
             oci_dir.to_str().unwrap(),

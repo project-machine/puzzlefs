@@ -47,8 +47,9 @@ pub fn mount<T: AsRef<str>>(
     mountpoint: &Path,
     options: &[T],
     init_notify: Option<PipeDescriptor>,
+    manifest_verity: Option<&[u8]>,
 ) -> Result<()> {
-    let pfs = PuzzleFS::open(image, tag)?;
+    let pfs = PuzzleFS::open(image, tag, manifest_verity)?;
     let fuse = Fuse::new(pfs, None, init_notify);
     fuse_ffi::mount2(
         fuse,
@@ -68,8 +69,9 @@ pub fn spawn_mount<T: AsRef<str>>(
     options: &[T],
     init_notify: Option<PipeDescriptor>,
     sender: Option<std::sync::mpsc::Sender<()>>,
+    manifest_verity: Option<&[u8]>,
 ) -> Result<fuse_ffi::BackgroundSession> {
-    let pfs = PuzzleFS::open(image, tag)?;
+    let pfs = PuzzleFS::open(image, tag, manifest_verity)?;
     let fuse = Fuse::new(pfs, sender, init_notify);
     Ok(fuse_ffi::spawn_mount2(
         fuse,

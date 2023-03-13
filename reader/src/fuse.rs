@@ -115,7 +115,13 @@ impl Fuse {
     fn _read(&mut self, ino: u64, offset: u64, size: u32) -> Result<Vec<u8>> {
         let inode = self.pfs.find_inode(ino)?;
         let mut buf = vec![0_u8; size as usize];
-        let read = file_read(&self.pfs.oci, &inode, offset as usize, &mut buf)?;
+        let read = file_read(
+            &self.pfs.oci,
+            &inode,
+            offset as usize,
+            &mut buf,
+            &self.pfs.verity_data,
+        )?;
         buf.truncate(read);
         Ok(buf)
     }
@@ -469,7 +475,7 @@ impl Filesystem for Fuse {
                 reply.entry(&ttl, &attr, generation)
             }
             Err(e) => {
-                debug!("cannot lookup parent: {parent}, name {name:?}!");
+                debug!("cannot lookup parent: {parent}, name {name:?} {e}!");
                 reply.error(e.to_errno());
             }
         }
@@ -483,7 +489,7 @@ impl Filesystem for Fuse {
                 reply.attr(&ttl, &attr)
             }
             Err(e) => {
-                debug!("cannot getattr for ino {ino}!");
+                debug!("cannot getattr for ino {ino} {e}!");
                 reply.error(e.to_errno())
             }
         }
@@ -493,7 +499,7 @@ impl Filesystem for Fuse {
         match self._readlink(ino) {
             Ok(symlink) => reply.data(symlink.as_bytes()),
             Err(e) => {
-                debug!("cannot readlink ino: {ino}!");
+                debug!("cannot readlink ino: {ino} {e}!");
                 reply.error(e.to_errno())
             }
         }
@@ -519,7 +525,7 @@ impl Filesystem for Fuse {
         match self._read(ino, uoffset, size) {
             Ok(data) => reply.data(data.as_slice()),
             Err(e) => {
-                debug!("cannot read ino {ino}, offset: {uoffset}!");
+                debug!("cannot read ino {ino}, offset: {uoffset} {e}!");
                 reply.error(e.to_errno())
             }
         }
@@ -554,7 +560,7 @@ impl Filesystem for Fuse {
         match self._readdir(ino, offset, &mut reply) {
             Ok(_) => reply.ok(),
             Err(e) => {
-                debug!("cannot readdir ino: {ino}, offset {offset}!");
+                debug!("cannot readdir ino: {ino}, offset {offset} {e}!");
                 reply.error(e.to_errno())
             }
         }
@@ -608,7 +614,7 @@ impl Filesystem for Fuse {
                 }
             }
             Err(e) => {
-                debug!("cannot getxattr, ino: {ino}, name {name:?}!");
+                debug!("cannot getxattr, ino: {ino}, name {name:?} {e}!");
                 reply.error(e.to_errno())
             }
         }
@@ -630,7 +636,7 @@ impl Filesystem for Fuse {
                 }
             }
             Err(e) => {
-                debug!("cannot listxattr, ino {ino}, size {size}!");
+                debug!("cannot listxattr, ino {ino}, size {size} {e}!");
                 reply.error(e.to_errno())
             }
         }
@@ -670,13 +676,14 @@ mod tests {
         let dir = tempdir().unwrap();
         let image = Image::new(dir.path()).unwrap();
         let rootfs_desc = build_test_fs(Path::new("../builder/test/test-1"), &image).unwrap();
-        image.add_tag("test".to_string(), rootfs_desc).unwrap();
+        image.add_tag("test", rootfs_desc).unwrap();
         let mountpoint = tempdir().unwrap();
         let _bg = crate::spawn_mount::<&str>(
             image,
             "test",
             Path::new(mountpoint.path()),
             &[],
+            None,
             None,
             None,
         )

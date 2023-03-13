@@ -19,9 +19,12 @@ builder = { path = "../builder" }
 oci = { path = "../oci" }
 reader = { path = "../reader" }
 extractor = { path = "../extractor" }
+fsverity_helpers = { path = "../fsverity_helpers" }
+hex = "*"
 
 [dev-dependencies]
 docker_extract = "*"
 assert_cmd = "*"
 dir-diff = "*"
 tempfile = "*"
+walkdir = "2"

@@ -1,8 +1,9 @@
-use builder::{add_rootfs_delta, build_initial_rootfs};
+use builder::{add_rootfs_delta, build_initial_rootfs, enable_fs_verity};
 use clap::{Args, Parser, Subcommand};
 use daemonize::Daemonize;
 use env_logger::Env;
 use extractor::extract_rootfs;
+use fsverity_helpers::get_fs_verity_digest;
 use log::{info, LevelFilter};
 use oci::Image;
 use reader::fuse::PipeDescriptor;
@@ -10,6 +11,7 @@ use reader::{mount, spawn_mount};
 use std::fs;
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use syslog::{BasicLogger, Facility, Formatter3164};
 
 #[derive(Parser)]
@@ -24,6 +26,7 @@ enum SubCommand {
     Build(Build),
     Mount(Mount),
     Extract(Extract),
+    EnableFsVerity(FsVerity),
 }
 
 #[derive(Args)]
@@ -46,6 +49,8 @@ struct Mount {
     init_pipe: Option<String>,
     #[arg(short, value_delimiter = ',')]
     options: Option<Vec<String>>,
+    #[arg(short, long, value_name = "fs verity root digest")]
+    digest: Option<String>,
 }
 
 #[derive(Args)]
@@ -53,6 +58,13 @@ struct Extract {
     oci_dir: String,
     tag: String,
     extract_dir: String,
+}
+
+#[derive(Args)]
+struct FsVerity {
+    oci_dir: String,
+    tag: String,
+    root_hash: String,
 }
 
 // set default log level when RUST_LOG environment variable is not set
@@ -98,16 +110,27 @@ fn main() -> anyhow::Result<()> {
             let rootfs = Path::new(&b.rootfs);
             let oci_dir = Path::new(&b.oci_dir);
             let image = Image::new(oci_dir)?;
-            match b.base_layer {
+            let new_image = match b.base_layer {
                 Some(base_layer) => {
                     let (desc, image) = add_rootfs_delta(rootfs, image, &base_layer)?;
-                    image.add_tag(b.tag, desc).map_err(|e| e.into())
+                    image.add_tag(&b.tag, desc)?;
+                    image
                 }
                 None => {
                     let desc = build_initial_rootfs(rootfs, &image)?;
-                    image.add_tag(b.tag, desc).map_err(|e| e.into())
+                    image.add_tag(&b.tag, desc)?;
+                    Arc::new(image)
                 }
-            }
+            };
+            let mut manifest_fd = new_image.get_image_manifest_fd(&b.tag)?;
+            let mut read_buffer = Vec::new();
+            manifest_fd.read_to_end(&mut read_buffer)?;
+            let manifest_digest = get_fs_verity_digest(&read_buffer)?;
+            println!(
+                "puzzlefs image manifest digest: {}",
+                hex::encode(manifest_digest)
+            );
+            Ok(())
         }
         SubCommand::Mount(m) => {
             let log_level = "info";
@@ -119,9 +142,11 @@ fn main() -> anyhow::Result<()> {
 
             let oci_dir = Path::new(&m.oci_dir);
             let oci_dir = fs::canonicalize(oci_dir)?;
-            let image = Image::new(&oci_dir)?;
+            let image = Image::open(&oci_dir)?;
             let mountpoint = Path::new(&m.mountpoint);
             let mountpoint = fs::canonicalize(mountpoint)?;
+
+            let manifest_verity = m.digest.map(hex::decode).transpose()?;
 
             if m.foreground {
                 let (send, recv) = std::sync::mpsc::channel();
@@ -142,6 +167,7 @@ fn main() -> anyhow::Result<()> {
                     m.init_pipe
                         .map(|x| PipeDescriptor::NamedPipe(PathBuf::from(x))),
                     Some(fuse_thread_finished),
+                    manifest_verity.as_deref(),
                 )?;
                 // This blocks until either ctrl-c is pressed or the filesystem is unmounted
                 let () = recv.recv().unwrap();
@@ -163,6 +189,7 @@ fn main() -> anyhow::Result<()> {
                             &mountpoint,
                             &m.options.unwrap_or_default()[..],
                             Some(PipeDescriptor::UnnamedPipe(init_notify)),
+                            manifest_verity.as_deref(),
                         )?;
                     }
                     Err(e) => eprintln!("Error, {e}"),
@@ -174,6 +201,13 @@ fn main() -> anyhow::Result<()> {
         SubCommand::Extract(e) => {
             init_logging("info");
             extract_rootfs(&e.oci_dir, &e.tag, &e.extract_dir)
+        }
+        SubCommand::EnableFsVerity(v) => {
+            let oci_dir = Path::new(&v.oci_dir);
+            let oci_dir = fs::canonicalize(oci_dir)?;
+            let image = Image::open(&oci_dir)?;
+            enable_fs_verity(image, &v.tag, &v.root_hash)?;
+            Ok(())
         }
     }
 }

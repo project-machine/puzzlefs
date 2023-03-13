@@ -7,5 +7,6 @@ members = [
     "oci",
     "reader",
     "compression",
-    "extractor"
+    "extractor",
+    "fsverity_helpers"
 ]

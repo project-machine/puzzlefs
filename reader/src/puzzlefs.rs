@@ -1,3 +1,4 @@
+use std::backtrace::Backtrace;
 use std::cmp::min;
 use std::convert::TryFrom;
 use std::ffi::{OsStr, OsString};
@@ -7,7 +8,7 @@ use std::sync::Arc;
 
 use nix::errno::Errno;
 
-use format::{FileChunk, Ino, InodeAdditional, MetadataBlob, Result, WireFormatError};
+use format::{FileChunk, Ino, InodeAdditional, MetadataBlob, Result, VerityData, WireFormatError};
 use oci::{Digest, Image};
 
 #[derive(Debug)]
@@ -94,6 +95,7 @@ pub(crate) fn file_read(
     inode: &Inode,
     offset: usize,
     data: &mut [u8],
+    verity_data: &Option<VerityData>,
 ) -> Result<usize> {
     let chunks = match &inode.mode {
         InodeMode::File { chunks } => chunks,
@@ -131,7 +133,12 @@ pub(crate) fn file_read(
         file_offset += addl_offset;
 
         // how many did we actually read?
-        let n = oci.fill_from_chunk(chunk.blob, addl_offset as u64, &mut data[start..finish])?;
+        let n = oci.fill_from_chunk(
+            chunk.blob,
+            addl_offset as u64,
+            &mut data[start..finish],
+            verity_data,
+        )?;
         file_offset += n;
         buf_offset += n;
     }
@@ -143,22 +150,44 @@ pub(crate) fn file_read(
 pub struct PuzzleFS {
     pub oci: Arc<Image>,
     layers: Vec<format::MetadataBlob>,
+    pub verity_data: Option<VerityData>,
+    pub manifest_verity: Option<Vec<u8>>,
 }
 
 impl PuzzleFS {
-    pub fn open(oci: Image, tag: &str) -> format::Result<PuzzleFS> {
-        let rootfs = oci.open_rootfs_blob::<compression::Noop>(tag)?;
+    pub fn open(oci: Image, tag: &str, manifest_verity: Option<&[u8]>) -> format::Result<PuzzleFS> {
+        let rootfs = oci.open_rootfs_blob::<compression::Noop>(tag, manifest_verity)?;
+        let verity_data = if manifest_verity.is_some() {
+            Some(rootfs.fs_verity_data)
+        } else {
+            None
+        };
         let layers = rootfs
             .metadatas
             .iter()
             .map(|md| -> Result<MetadataBlob> {
-                let digest = &<Digest>::try_from(md)?;
-                oci.open_metadata_blob(digest).map_err(|e| e.into())
+                let digest = <Digest>::try_from(md)?;
+                let file_verity = if let Some(verity) = &verity_data {
+                    Some(
+                        &verity.get(&digest.underlying()).ok_or(
+                            WireFormatError::InvalidFsVerityData(
+                                format!("missing verity data {digest}"),
+                                Backtrace::capture(),
+                            ),
+                        )?[..],
+                    )
+                } else {
+                    None
+                };
+                oci.open_metadata_blob(&digest, file_verity)
+                    .map_err(|e| e.into())
             })
             .collect::<format::Result<Vec<MetadataBlob>>>()?;
         Ok(PuzzleFS {
             oci: Arc::new(oci),
             layers,
+            verity_data,
+            manifest_verity: manifest_verity.map(|e| e.to_vec()),
         })
     }
 
@@ -242,8 +271,14 @@ impl io::Read for FileReader<'_> {
             return Ok(0);
         }
 
-        let read = file_read(self.oci, self.inode, self.offset, &mut buf[0..to_read])
-            .map_err(|e| io::Error::from_raw_os_error(e.to_errno()))?;
+        let read = file_read(
+            self.oci,
+            self.inode,
+            self.offset,
+            &mut buf[0..to_read],
+            &None,
+        )
+        .map_err(|e| io::Error::from_raw_os_error(e.to_errno()))?;
         self.offset += read;
         Ok(read)
     }
@@ -265,8 +300,8 @@ mod tests {
         let oci_dir = tempdir().unwrap();
         let image = Image::new(oci_dir.path()).unwrap();
         let rootfs_desc = build_test_fs(Path::new("../builder/test/test-1"), &image).unwrap();
-        image.add_tag("test".to_string(), rootfs_desc).unwrap();
-        let mut pfs = PuzzleFS::open(image, "test").unwrap();
+        image.add_tag("test", rootfs_desc).unwrap();
+        let mut pfs = PuzzleFS::open(image, "test", None).unwrap();
 
         let inode = pfs.find_inode(2).unwrap();
         let mut reader = FileReader::new(&pfs.oci, &inode).unwrap();
@@ -286,8 +321,8 @@ mod tests {
         let oci_dir = tempdir().unwrap();
         let image = Image::new(oci_dir.path()).unwrap();
         let rootfs_desc = build_test_fs(Path::new("../builder/test/test-1"), &image).unwrap();
-        image.add_tag("test".to_string(), rootfs_desc).unwrap();
-        let mut pfs = PuzzleFS::open(image, "test").unwrap();
+        image.add_tag("test", rootfs_desc).unwrap();
+        let mut pfs = PuzzleFS::open(image, "test", None).unwrap();
 
         assert_eq!(pfs.lookup(Path::new("/")).unwrap().unwrap().inode.ino, 1);
         assert_eq!(
