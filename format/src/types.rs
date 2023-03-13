@@ -63,6 +63,7 @@ fn read_one<'a, T: Deserialize<'a>, R: Read>(r: R) -> Result<T> {
 pub struct Rootfs {
     pub metadatas: Vec<BlobRef>,
     pub fs_verity_data: VerityData,
+    pub manifest_version: u64,
 }
 
 impl Rootfs {
