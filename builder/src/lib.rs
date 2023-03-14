@@ -3,6 +3,7 @@ use fsverity_helpers::{
     FS_VERITY_BLOCK_SIZE_DEFAULT,
 };
 use oci::Digest;
+use std::backtrace::Backtrace;
 use std::cmp::min;
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::{OsStr, OsString};
@@ -34,6 +35,8 @@ use filesystem::FilesystemStream;
 const MIN_CHUNK_SIZE: u32 = 16 * 1024;
 const AVG_CHUNK_SIZE: u32 = 64 * 1024;
 const MAX_CHUNK_SIZE: u32 = 256 * 1024;
+
+const PUZZLEFS_IMAGE_MANIFEST_VERSION: u64 = 1;
 
 fn walker(rootfs: &Path) -> WalkDir {
     // breadth first search for sharing, don't cross filesystems just to be safe, order by file
@@ -475,6 +478,7 @@ pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Descriptor> {
         &Rootfs {
             metadatas,
             fs_verity_data: verity_data,
+            manifest_version: PUZZLEFS_IMAGE_MANIFEST_VERSION,
         },
     )?;
     oci.put_blob::<_, compression::Noop, media_types::Rootfs>(rootfs_buf.as_slice())
@@ -482,12 +486,24 @@ pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Descriptor> {
 
 // add_rootfs_delta adds whatever the delta between the current rootfs and the puzzlefs
 // representation from the tag is.
-pub fn add_rootfs_delta(rootfs: &Path, oci: Image, tag: &str) -> Result<(Descriptor, Arc<Image>)> {
+pub fn add_rootfs_delta(
+    rootfs_path: &Path,
+    oci: Image,
+    tag: &str,
+) -> Result<(Descriptor, Arc<Image>)> {
     let mut verity_data: VerityData = BTreeMap::new();
     let pfs = PuzzleFS::open(oci, tag, None)?;
     let oci = Arc::clone(&pfs.oci);
-    let desc = build_delta(rootfs, &oci, Some(pfs), &mut verity_data)?;
     let mut rootfs = oci.open_rootfs_blob::<compression::Noop>(tag, None)?;
+
+    if rootfs.manifest_version != PUZZLEFS_IMAGE_MANIFEST_VERSION {
+        return Err(WireFormatError::InvalidImageVersion(
+            rootfs.manifest_version.to_string(),
+            Backtrace::capture(),
+        ));
+    }
+
+    let desc = build_delta(rootfs_path, &oci, Some(pfs), &mut verity_data)?;
     let br = BlobRef {
         kind: BlobRefKind::Other {
             digest: desc.digest.underlying(),
