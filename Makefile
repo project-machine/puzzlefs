@@ -1,7 +1,12 @@
 SRC=$(shell find . -name \*.rs | grep -v "^./target")
 
-target/debug/puzzlefs: $(SRC)
+.PHONY: debug
+debug:
 	cargo build
+
+.PHONY: release
+release:
+	cargo build --release
 
 .PHONY: check
 check:
