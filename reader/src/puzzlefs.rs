@@ -180,7 +180,6 @@ impl PuzzleFS {
                     None
                 };
                 oci.open_metadata_blob(&digest, file_verity)
-                    .map_err(|e| e.into())
             })
             .collect::<format::Result<Vec<MetadataBlob>>>()?;
         Ok(PuzzleFS {

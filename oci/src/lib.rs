@@ -141,9 +141,9 @@ impl Image {
         &self,
         digest: &Digest,
         verity: Option<&[u8]>,
-    ) -> io::Result<MetadataBlob> {
+    ) -> Result<MetadataBlob> {
         let f = self.open_raw_blob(digest, verity)?;
-        Ok(MetadataBlob::new(f))
+        MetadataBlob::new(f)
     }
 
     pub fn get_image_manifest_fd(&self, tag: &str) -> Result<fs::File> {
