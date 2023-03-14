@@ -29,9 +29,11 @@ use fastcdc::v2020::StreamCDC;
 mod filesystem;
 use filesystem::FilesystemStream;
 
-const MIN_CHUNK_SIZE: u32 = 1024 * 1024;
-const AVG_CHUNK_SIZE: u32 = 4 * 1024 * 1024;
-const MAX_CHUNK_SIZE: u32 = 16 * 1024 * 1024;
+// Quoting from https://github.com/ronomon/deduplication
+// An average chunk size of 64 KB is recommended for optimal end-to-end deduplication and compression efficiency
+const MIN_CHUNK_SIZE: u32 = 16 * 1024;
+const AVG_CHUNK_SIZE: u32 = 64 * 1024;
+const MAX_CHUNK_SIZE: u32 = 256 * 1024;
 
 fn walker(rootfs: &Path) -> WalkDir {
     // breadth first search for sharing, don't cross filesystems just to be safe, order by file
