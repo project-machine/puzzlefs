@@ -23,7 +23,6 @@ fsverity_helpers = { path = "../fsverity_helpers" }
 hex = "*"
 
 [dev-dependencies]
-docker_extract = "*"
 assert_cmd = "*"
 dir-diff = "*"
 tempfile = "*"
