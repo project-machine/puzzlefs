@@ -13,6 +13,7 @@ use std::fs;
 use std::fs::OpenOptions;
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
+use std::process::exit;
 use std::sync::Arc;
 use syslog::{BasicLogger, Facility, Formatter3164};
 
@@ -118,6 +119,10 @@ fn mount_background(
         let mut read_buffer = [0];
         if let Err(e) = recv.read_exact(&mut read_buffer) {
             info!("error reading from pipe {e}")
+        } else if read_buffer[0] == b'f' {
+            // in case of failure, 'f' is written into the pipe
+            // we explicitly exit with an error code, otherwise exit(0) is done by daemonize
+            exit(1);
         }
     });
 
