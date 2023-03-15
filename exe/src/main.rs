@@ -4,11 +4,13 @@ use daemonize::Daemonize;
 use env_logger::Env;
 use extractor::extract_rootfs;
 use fsverity_helpers::get_fs_verity_digest;
-use log::{info, LevelFilter};
+use log::{error, info, LevelFilter};
 use oci::Image;
+use os_pipe::{PipeReader, PipeWriter};
 use reader::fuse::PipeDescriptor;
 use reader::{mount, spawn_mount};
 use std::fs;
+use std::fs::OpenOptions;
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -103,6 +105,40 @@ fn init_syslog(log_level: &str) -> std::io::Result<()> {
     Ok(())
 }
 
+fn mount_background(
+    image: Image,
+    tag: &str,
+    mountpoint: &Path,
+    options: Option<Vec<String>>,
+    manifest_verity: Option<Vec<u8>>,
+    mut recv: PipeReader,
+    init_notify: &mut PipeWriter,
+) -> anyhow::Result<()> {
+    let daemonize = Daemonize::new().exit_action(move || {
+        let mut read_buffer = [0];
+        if let Err(e) = recv.read_exact(&mut read_buffer) {
+            info!("error reading from pipe {e}")
+        }
+    });
+
+    match daemonize.start() {
+        Ok(_) => {
+            mount(
+                image,
+                tag,
+                mountpoint,
+                &options.unwrap_or_default()[..],
+                Some(PipeDescriptor::UnnamedPipe(init_notify.try_clone()?)),
+                manifest_verity.as_deref(),
+            )?;
+        }
+        Err(e) => {
+            return Err(e.into());
+        }
+    };
+    Ok(())
+}
+
 fn main() -> anyhow::Result<()> {
     let opts: Opts = Opts::parse();
     match opts.subcmd {
@@ -159,40 +195,52 @@ fn main() -> anyhow::Result<()> {
                 .unwrap();
 
                 let fuse_thread_finished = send;
-                let _guard = spawn_mount(
+                let named_pipe = m.init_pipe.map(PathBuf::from);
+                let result = spawn_mount(
                     image,
                     &m.tag,
                     &mountpoint,
                     &m.options.unwrap_or_default(),
-                    m.init_pipe
-                        .map(|x| PipeDescriptor::NamedPipe(PathBuf::from(x))),
+                    named_pipe.clone().map(PipeDescriptor::NamedPipe),
                     Some(fuse_thread_finished),
                     manifest_verity.as_deref(),
-                )?;
+                );
+                if let Err(e) = result {
+                    if let Some(pipe) = named_pipe {
+                        let file = OpenOptions::new().write(true).open(&pipe);
+                        match file {
+                            Ok(mut file) => {
+                                if let Err(e) = file.write_all(b"f") {
+                                    error!("cannot write to pipe {}, {e}", pipe.display());
+                                }
+                            }
+                            Err(e) => {
+                                error!("cannot open pipe {}, {e}", pipe.display());
+                            }
+                        }
+                    }
+                    return Err(e.into());
+                }
+
                 // This blocks until either ctrl-c is pressed or the filesystem is unmounted
                 let () = recv.recv().unwrap();
             } else {
-                let (mut recv, init_notify) = os_pipe::pipe()?;
+                let (recv, mut init_notify) = os_pipe::pipe()?;
 
-                let daemonize = Daemonize::new().exit_action(move || {
-                    let mut read_buffer = [0];
-                    if let Err(e) = recv.read_exact(&mut read_buffer) {
-                        info!("error reading from pipe {e}")
+                if let Err(e) = mount_background(
+                    image,
+                    &m.tag,
+                    &mountpoint,
+                    m.options,
+                    manifest_verity,
+                    recv,
+                    &mut init_notify,
+                ) {
+                    if let Err(e) = init_notify.write_all(b"f") {
+                        error!("puzzlefs will hang because we couldn't write to pipe, {e}");
                     }
-                });
-
-                match daemonize.start() {
-                    Ok(_) => {
-                        mount(
-                            image,
-                            &m.tag,
-                            &mountpoint,
-                            &m.options.unwrap_or_default()[..],
-                            Some(PipeDescriptor::UnnamedPipe(init_notify)),
-                            manifest_verity.as_deref(),
-                        )?;
-                    }
-                    Err(e) => eprintln!("Error, {e}"),
+                    error!("mount_background failed: {e}");
+                    return Err(e);
                 }
             }
 
