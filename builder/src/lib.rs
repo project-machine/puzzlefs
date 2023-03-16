@@ -94,12 +94,12 @@ fn process_chunks<C: Compression>(
         let chunk = result.unwrap();
         let mut chunk_used: u64 = 0;
 
-        let desc = oci.put_blob::<_, C, media_types::Chunk>(&*chunk.data)?;
+        let (desc, fs_verity_digest) = oci.put_blob::<_, C, media_types::Chunk>(&*chunk.data)?;
         let blob_kind = BlobRefKind::Other {
             digest: desc.digest.underlying(),
         };
 
-        let verity_hash = get_fs_verity_digest(&chunk.data)?;
+        let verity_hash = fs_verity_digest;
         verity_data.insert(desc.digest.underlying(), verity_hash);
 
         while chunk_used < chunk.length as u64 {
@@ -450,7 +450,7 @@ fn build_delta<C: Compression>(
     md_buf.append(&mut files_buf);
     md_buf.append(&mut others_buf);
 
-    let desc = oci.put_blob::<_, compression::Noop, media_types::Inodes>(md_buf.as_slice())?;
+    let (desc, _) = oci.put_blob::<_, compression::Noop, media_types::Inodes>(md_buf.as_slice())?;
     let verity_hash = get_fs_verity_digest(md_buf.as_slice())?;
     verity_data.insert(desc.digest.underlying(), verity_hash);
 
@@ -477,7 +477,9 @@ pub fn build_initial_rootfs<C: Compression>(rootfs: &Path, oci: &Image) -> Resul
             manifest_version: PUZZLEFS_IMAGE_MANIFEST_VERSION,
         },
     )?;
-    oci.put_blob::<_, compression::Noop, media_types::Rootfs>(rootfs_buf.as_slice())
+    Ok(oci
+        .put_blob::<_, compression::Noop, media_types::Rootfs>(rootfs_buf.as_slice())?
+        .0)
 }
 
 // add_rootfs_delta adds whatever the delta between the current rootfs and the puzzlefs
@@ -515,7 +517,8 @@ pub fn add_rootfs_delta<C: Compression>(
     let mut rootfs_buf = Vec::new();
     serde_cbor::to_writer(&mut rootfs_buf, &rootfs)?;
     Ok((
-        oci.put_blob::<_, compression::Noop, media_types::Rootfs>(rootfs_buf.as_slice())?,
+        oci.put_blob::<_, compression::Noop, media_types::Rootfs>(rootfs_buf.as_slice())?
+            .0,
         oci,
     ))
 }

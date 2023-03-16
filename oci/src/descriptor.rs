@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-pub use format::Digest;
+pub use format::{Digest, SHA256_BLOCK_SIZE};
 
 const NAME_ANNOTATION: &str = "org.opencontainers.image.ref.name";
 
