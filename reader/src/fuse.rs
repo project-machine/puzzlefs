@@ -206,7 +206,7 @@ impl Filesystem for Fuse {
         if let Some(init_notify) = self.init_notify.take() {
             match init_notify {
                 PipeDescriptor::UnnamedPipe(mut pipe_writer) => {
-                    if let Err(e) = pipe_writer.write_all(b"\n") {
+                    if let Err(e) = pipe_writer.write_all(b"s") {
                         warn!("unsuccessful send! {e}");
                     }
                 }
@@ -233,7 +233,7 @@ impl Filesystem for Fuse {
                         let file = OpenOptions::new().write(true).open(&named_pipe);
                         match file {
                             Ok(mut file) => {
-                                if let Err(e) = file.write_all(b"\n") {
+                                if let Err(e) = file.write_all(b"s") {
                                     warn!("cannot write to pipe {}, {e}", named_pipe.display());
                                 }
                             }
