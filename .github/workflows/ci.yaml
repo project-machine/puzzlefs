@@ -17,7 +17,5 @@ jobs:
                 components: clippy, rustfmt
             - name: install dependencies
               run: |
-                sudo apt-get install libfuse-dev libzstd-dev libxxhash-dev
-                # docker_extract wants this to be in the local daemon
-                docker pull ubuntu:latest
+                sudo apt-get install libfuse-dev libzstd-dev libxxhash-dev skopeo umoci
             - run: make lint check

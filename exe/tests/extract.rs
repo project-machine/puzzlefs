@@ -12,13 +12,13 @@ use helpers::{get_image, puzzlefs};
 fn build_and_extract_is_noop() -> anyhow::Result<()> {
     let dir = tempdir().unwrap();
     let ubuntu = dir.path().join("ubuntu");
-    get_image(&ubuntu).unwrap();
+    let ubuntu_rootfs = get_image(ubuntu)?;
 
     // TODO: figure out a better way to do all this osstr stuff...
     let oci = dir.path().join("oci");
     puzzlefs([
         OsStr::new("build"),
-        ubuntu.as_ref(),
+        ubuntu_rootfs.as_ref(),
         oci.as_ref(),
         OsStr::new("test"),
     ])?;
@@ -30,6 +30,6 @@ fn build_and_extract_is_noop() -> anyhow::Result<()> {
         OsStr::new("test"),
         extracted.as_os_str(),
     ])?;
-    assert!(!dir_diff::is_different(ubuntu, extracted).unwrap());
+    assert!(!dir_diff::is_different(ubuntu_rootfs, extracted).unwrap());
     Ok(())
 }
