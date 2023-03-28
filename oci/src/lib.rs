@@ -1,6 +1,7 @@
 extern crate hex;
 
 use fsverity_helpers::check_fs_verity;
+use std::any::Any;
 use std::backtrace::Backtrace;
 use std::convert::TryFrom;
 use std::fs;
@@ -83,13 +84,18 @@ impl Image {
         PathBuf::from("blobs/sha256")
     }
 
-    pub fn put_blob<R: io::Read, C: Compression, MT: media_types::MediaType>(
+    pub fn put_blob<R: io::Read, C: Compression + Any, MT: media_types::MediaType>(
         &self,
         mut buf: R,
-    ) -> Result<(Descriptor, [u8; SHA256_BLOCK_SIZE])> {
+    ) -> Result<(Descriptor, [u8; SHA256_BLOCK_SIZE], bool)> {
         let mut tmp = NamedTempFile::new_in(&self.oci_dir)?;
         let mut compressed = C::compress(tmp.reopen()?)?;
         let mut hasher = Sha256::new();
+        // generics may not be the best way to implement compression, alternatives:
+        // trait objects, but they add runtime overhead
+        // an enum together with enum_dispatch
+        let compressed_blob =
+            std::any::TypeId::of::<C>() != std::any::TypeId::of::<compression::Noop>();
 
         let size = io::copy(&mut buf, &mut compressed)?;
         compressed.end()?;
@@ -121,7 +127,7 @@ impl Image {
         } else {
             tmp.persist(path).map_err(|e| e.error)?;
         }
-        Ok((descriptor, fs_verity_digest))
+        Ok((descriptor, fs_verity_digest, compressed_blob))
     }
 
     fn open_raw_blob(&self, digest: &Digest, verity: Option<&[u8]>) -> io::Result<fs::File> {
@@ -195,7 +201,11 @@ impl Image {
         } else {
             file_verity = None;
         }
-        let mut blob = self.open_compressed_blob::<compression::Zstd>(digest, file_verity)?;
+        let mut blob = if chunk.compressed {
+            self.open_compressed_blob::<compression::Zstd>(digest, file_verity)?
+        } else {
+            self.open_compressed_blob::<compression::Noop>(digest, file_verity)?
+        };
         blob.seek(io::SeekFrom::Start(chunk.offset + addl_offset))?;
         let n = blob.read(buf)?;
         Ok(n)
@@ -241,7 +251,7 @@ mod tests {
     fn test_put_blob_correct_hash() {
         let dir = tempdir().unwrap();
         let image: Image = Image::new(dir.path()).unwrap();
-        let (desc, _) = image
+        let (desc, ..) = image
             .put_blob::<_, compression::Noop, media_types::Chunk>("meshuggah rocks".as_bytes())
             .unwrap();
 
@@ -263,7 +273,7 @@ mod tests {
     fn test_put_get_index() {
         let dir = tempdir().unwrap();
         let image = Image::new(dir.path()).unwrap();
-        let (mut desc, _) = image
+        let (mut desc, ..) = image
             .put_blob::<_, DefaultCompression, media_types::Chunk>("meshuggah rocks".as_bytes())
             .unwrap();
         desc.set_name("foo");
