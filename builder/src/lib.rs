@@ -75,7 +75,7 @@ struct Other {
     additional: Option<InodeAdditional>,
 }
 
-fn process_chunks<C: Compression + Any>(
+fn process_chunks<C: for<'a> Compression<'a> + Any>(
     oci: &Image,
     mut chunker: StreamCDC,
     files: &mut [File],
@@ -96,7 +96,7 @@ fn process_chunks<C: Compression + Any>(
         let mut chunk_used: u64 = 0;
 
         let (desc, fs_verity_digest, compressed) =
-            oci.put_blob::<_, C, media_types::Chunk>(&*chunk.data)?;
+            oci.put_blob::<C, media_types::Chunk>(&chunk.data)?;
         let blob_kind = BlobRefKind::Other {
             digest: desc.digest.underlying(),
         };
@@ -154,7 +154,7 @@ fn inode_encoded_size(num_inodes: usize) -> usize {
     format::cbor_size_of_list_header(num_inodes) + num_inodes * format::INODE_WIRE_SIZE
 }
 
-fn build_delta<C: Compression + Any>(
+fn build_delta<C: for<'a> Compression<'a> + Any>(
     rootfs: &Path,
     oci: &Image,
     mut existing: Option<PuzzleFS>,
@@ -456,15 +456,14 @@ fn build_delta<C: Compression + Any>(
     md_buf.append(&mut files_buf);
     md_buf.append(&mut others_buf);
 
-    let (desc, ..) =
-        oci.put_blob::<_, compression::Noop, media_types::Inodes>(md_buf.as_slice())?;
+    let (desc, ..) = oci.put_blob::<compression::Noop, media_types::Inodes>(md_buf.as_slice())?;
     let verity_hash = get_fs_verity_digest(md_buf.as_slice())?;
     verity_data.insert(desc.digest.underlying(), verity_hash);
 
     Ok(desc)
 }
 
-pub fn build_initial_rootfs<C: Compression + Any>(
+pub fn build_initial_rootfs<C: for<'a> Compression<'a> + Any>(
     rootfs: &Path,
     oci: &Image,
 ) -> Result<Descriptor> {
@@ -489,13 +488,13 @@ pub fn build_initial_rootfs<C: Compression + Any>(
         },
     )?;
     Ok(oci
-        .put_blob::<_, compression::Noop, media_types::Rootfs>(rootfs_buf.as_slice())?
+        .put_blob::<compression::Noop, media_types::Rootfs>(rootfs_buf.as_slice())?
         .0)
 }
 
 // add_rootfs_delta adds whatever the delta between the current rootfs and the puzzlefs
 // representation from the tag is.
-pub fn add_rootfs_delta<C: Compression + Any>(
+pub fn add_rootfs_delta<C: for<'a> Compression<'a> + Any>(
     rootfs_path: &Path,
     oci: Image,
     tag: &str,
@@ -528,7 +527,7 @@ pub fn add_rootfs_delta<C: Compression + Any>(
     let mut rootfs_buf = Vec::new();
     serde_cbor::to_writer(&mut rootfs_buf, &rootfs)?;
     Ok((
-        oci.put_blob::<_, compression::Noop, media_types::Rootfs>(rootfs_buf.as_slice())?
+        oci.put_blob::<compression::Noop, media_types::Rootfs>(rootfs_buf.as_slice())?
             .0,
         oci,
     ))

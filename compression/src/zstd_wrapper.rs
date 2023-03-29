@@ -2,9 +2,8 @@ use common::MAX_CHUNK_SIZE;
 use std::cmp::min;
 use std::convert::TryFrom;
 use std::convert::TryInto;
-use std::fs;
 use std::io;
-use std::io::Read;
+use std::io::{Read, Write};
 
 use crate::{Compression, Compressor, Decompressor};
 
@@ -14,18 +13,18 @@ fn err_to_io<E: 'static + std::error::Error + Send + Sync>(e: E) -> io::Error {
     io::Error::new(io::ErrorKind::Other, e)
 }
 
-pub struct ZstdCompressor {
-    encoder: zstd::stream::write::Encoder<'static, std::fs::File>,
+pub struct ZstdCompressor<W: Write> {
+    encoder: zstd::stream::write::Encoder<'static, W>,
 }
 
-impl Compressor for ZstdCompressor {
+impl<W: Write> Compressor for ZstdCompressor<W> {
     fn end(self: Box<Self>) -> io::Result<()> {
         self.encoder.finish()?;
         Ok(())
     }
 }
 
-impl io::Write for ZstdCompressor {
+impl<W: Write> io::Write for ZstdCompressor<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.encoder.write(buf)
     }
@@ -86,13 +85,13 @@ impl io::Read for ZstdDecompressor {
 }
 pub struct Zstd {}
 
-impl Compression for Zstd {
-    fn compress(dest: fs::File) -> io::Result<Box<dyn Compressor>> {
+impl<'a> Compression<'a> for Zstd {
+    fn compress<W: Write + 'a>(dest: W) -> io::Result<Box<dyn Compressor + 'a>> {
         let encoder = zstd::stream::write::Encoder::new(dest, COMPRESSION_LEVEL)?;
         Ok(Box::new(ZstdCompressor { encoder }))
     }
 
-    fn decompress(mut source: fs::File) -> io::Result<Box<dyn Decompressor>> {
+    fn decompress<R: Read>(mut source: R) -> io::Result<Box<dyn Decompressor>> {
         let mut contents = Vec::new();
         source.read_to_end(&mut contents)?;
         let mut decompressor = zstd::bulk::Decompressor::new()?;

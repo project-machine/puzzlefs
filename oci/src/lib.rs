@@ -24,6 +24,8 @@ pub use descriptor::{Descriptor, Digest};
 
 mod index;
 pub use index::Index;
+use std::io::Cursor;
+use std::io::Write;
 
 pub mod media_types;
 
@@ -84,12 +86,12 @@ impl Image {
         PathBuf::from("blobs/sha256")
     }
 
-    pub fn put_blob<R: io::Read, C: Compression + Any, MT: media_types::MediaType>(
+    pub fn put_blob<C: for<'a> Compression<'a> + Any, MT: media_types::MediaType>(
         &self,
-        mut buf: R,
+        mut buf: &[u8],
     ) -> Result<(Descriptor, [u8; SHA256_BLOCK_SIZE], bool)> {
-        let mut tmp = NamedTempFile::new_in(&self.oci_dir)?;
-        let mut compressed = C::compress(tmp.reopen()?)?;
+        let mut compressed_data = Cursor::new(Vec::<u8>::new());
+        let mut compressed = C::compress(&mut compressed_data)?;
         let mut hasher = Sha256::new();
         // generics may not be the best way to implement compression, alternatives:
         // trait objects, but they add runtime overhead
@@ -97,17 +99,15 @@ impl Image {
         let compressed_blob =
             std::any::TypeId::of::<C>() != std::any::TypeId::of::<compression::Noop>();
 
-        let size = io::copy(&mut buf, &mut compressed)?;
+        let _uncompressed_size = io::copy(&mut buf, &mut compressed)?;
         compressed.end()?;
+        let compressed_size = compressed_data.get_ref().len() as u64;
 
-        let mut compressed_data = Vec::new();
-        tmp.read_to_end(&mut compressed_data)?;
-
-        hasher.update(&compressed_data[..]);
+        hasher.update(&compressed_data.get_ref()[..]);
         let digest = hasher.finalize();
         let media_type = C::append_extension(MT::name());
-        let descriptor = Descriptor::new(digest.into(), size, media_type);
-        let fs_verity_digest = get_fs_verity_digest(&compressed_data[..])?;
+        let descriptor = Descriptor::new(digest.into(), compressed_size, media_type);
+        let fs_verity_digest = get_fs_verity_digest(&compressed_data.get_ref()[..])?;
         let path = self.blob_path().join(descriptor.digest.to_string());
 
         // avoid replacing the data blob so we don't drop fsverity data
@@ -125,6 +125,8 @@ impl Image {
                 .into());
             }
         } else {
+            let mut tmp = NamedTempFile::new_in(&self.oci_dir)?;
+            tmp.write_all(compressed_data.get_ref())?;
             tmp.persist(path).map_err(|e| e.error)?;
         }
         Ok((descriptor, fs_verity_digest, compressed_blob))
@@ -140,7 +142,7 @@ impl Image {
         Ok(file)
     }
 
-    pub fn open_compressed_blob<C: Compression>(
+    pub fn open_compressed_blob<C: for<'a> Compression<'a>>(
         &self,
         digest: &Digest,
         verity: Option<&[u8]>,
@@ -167,7 +169,7 @@ impl Image {
         Ok(file)
     }
 
-    pub fn open_rootfs_blob<C: Compression>(
+    pub fn open_rootfs_blob<C: for<'a> Compression<'a>>(
         &self,
         tag: &str,
         verity: Option<&[u8]>,
@@ -252,7 +254,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let image: Image = Image::new(dir.path()).unwrap();
         let (desc, ..) = image
-            .put_blob::<_, compression::Noop, media_types::Chunk>("meshuggah rocks".as_bytes())
+            .put_blob::<compression::Noop, media_types::Chunk>("meshuggah rocks".as_bytes())
             .unwrap();
 
         const DIGEST: &str = "3abd5ce0f91f640d88dca1f26b37037b02415927cacec9626d87668a715ec12d";
@@ -274,7 +276,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let image = Image::new(dir.path()).unwrap();
         let (mut desc, ..) = image
-            .put_blob::<_, DefaultCompression, media_types::Chunk>("meshuggah rocks".as_bytes())
+            .put_blob::<DefaultCompression, media_types::Chunk>("meshuggah rocks".as_bytes())
             .unwrap();
         desc.set_name("foo");
         let mut index = Index::default();
@@ -292,10 +294,10 @@ mod tests {
         let dir = tempdir().unwrap();
         let image = Image::new(dir.path()).unwrap();
         let desc1 = image
-            .put_blob::<_, DefaultCompression, media_types::Chunk>("meshuggah rocks".as_bytes())
+            .put_blob::<DefaultCompression, media_types::Chunk>("meshuggah rocks".as_bytes())
             .unwrap();
         let desc2 = image
-            .put_blob::<_, DefaultCompression, media_types::Chunk>("meshuggah rocks".as_bytes())
+            .put_blob::<DefaultCompression, media_types::Chunk>("meshuggah rocks".as_bytes())
             .unwrap();
         assert_eq!(desc1, desc2);
     }
