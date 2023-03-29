@@ -88,7 +88,7 @@ impl Image {
 
     pub fn put_blob<C: for<'a> Compression<'a> + Any, MT: media_types::MediaType>(
         &self,
-        mut buf: &[u8],
+        buf: &[u8],
     ) -> Result<(Descriptor, [u8; SHA256_BLOCK_SIZE], bool)> {
         let mut compressed_data = Cursor::new(Vec::<u8>::new());
         let mut compressed = C::compress(&mut compressed_data)?;
@@ -96,17 +96,28 @@ impl Image {
         // generics may not be the best way to implement compression, alternatives:
         // trait objects, but they add runtime overhead
         // an enum together with enum_dispatch
-        let compressed_blob =
+        let mut compressed_blob =
             std::any::TypeId::of::<C>() != std::any::TypeId::of::<compression::Noop>();
 
-        let _uncompressed_size = io::copy(&mut buf, &mut compressed)?;
+        // without the clone, the io::copy leaves us with an empty slice
+        // we're only cloning the reference, which is ok because the slice itself gets mutated
+        // i.e. the slice advances through the buffer as it is being read
+        let uncompressed_size = io::copy(&mut <&[u8]>::clone(&buf), &mut compressed)?;
         compressed.end()?;
         let compressed_size = compressed_data.get_ref().len() as u64;
 
-        hasher.update(&compressed_data.get_ref()[..]);
+        // store the uncompressed blob if the compressed version has bigger size
+        let final_data = if compressed_blob && compressed_size >= uncompressed_size {
+            compressed_blob = false;
+            buf
+        } else {
+            compressed_data.get_ref()
+        };
+
+        hasher.update(final_data);
         let digest = hasher.finalize();
         let media_type = C::append_extension(MT::name());
-        let descriptor = Descriptor::new(digest.into(), compressed_size, media_type);
+        let descriptor = Descriptor::new(digest.into(), uncompressed_size, media_type);
         let fs_verity_digest = get_fs_verity_digest(&compressed_data.get_ref()[..])?;
         let path = self.blob_path().join(descriptor.digest.to_string());
 
@@ -126,7 +137,7 @@ impl Image {
             }
         } else {
             let mut tmp = NamedTempFile::new_in(&self.oci_dir)?;
-            tmp.write_all(compressed_data.get_ref())?;
+            tmp.write_all(final_data)?;
             tmp.persist(path).map_err(|e| e.error)?;
         }
         Ok((descriptor, fs_verity_digest, compressed_blob))
