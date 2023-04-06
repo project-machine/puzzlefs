@@ -1,6 +1,7 @@
 extern crate hex;
 
 use fsverity_helpers::check_fs_verity;
+use std::any::Any;
 use std::backtrace::Backtrace;
 use std::convert::TryFrom;
 use std::fs;
@@ -8,13 +9,13 @@ use std::io;
 use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 
+use fsverity_helpers::get_fs_verity_digest;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as Sha2Digest, Sha256};
-use tee::TeeReader;
 use tempfile::NamedTempFile;
 
 use compression::{Compression, Decompressor};
-use format::{MetadataBlob, Result, Rootfs, VerityData, WireFormatError};
+use format::{MetadataBlob, Result, Rootfs, VerityData, WireFormatError, SHA256_BLOCK_SIZE};
 use openat::Dir;
 use std::io::{Error, ErrorKind};
 
@@ -23,6 +24,8 @@ pub use descriptor::{Descriptor, Digest};
 
 mod index;
 pub use index::Index;
+use std::io::Cursor;
+use std::io::Write;
 
 pub mod media_types;
 
@@ -83,20 +86,39 @@ impl Image {
         PathBuf::from("blobs/sha256")
     }
 
-    pub fn put_blob<R: io::Read, C: Compression, MT: media_types::MediaType>(
+    pub fn put_blob<C: for<'a> Compression<'a> + Any, MT: media_types::MediaType>(
         &self,
-        buf: R,
-    ) -> Result<Descriptor> {
-        let tmp = NamedTempFile::new_in(&self.oci_dir)?;
-        let mut compressed = C::compress(tmp.reopen()?);
+        buf: &[u8],
+    ) -> Result<(Descriptor, [u8; SHA256_BLOCK_SIZE], bool)> {
+        let mut compressed_data = Cursor::new(Vec::<u8>::new());
+        let mut compressed = C::compress(&mut compressed_data)?;
         let mut hasher = Sha256::new();
+        // generics may not be the best way to implement compression, alternatives:
+        // trait objects, but they add runtime overhead
+        // an enum together with enum_dispatch
+        let mut compressed_blob =
+            std::any::TypeId::of::<C>() != std::any::TypeId::of::<compression::Noop>();
 
-        let mut t = TeeReader::new(buf, &mut hasher);
-        let size = io::copy(&mut t, &mut compressed)?;
+        // without the clone, the io::copy leaves us with an empty slice
+        // we're only cloning the reference, which is ok because the slice itself gets mutated
+        // i.e. the slice advances through the buffer as it is being read
+        let uncompressed_size = io::copy(&mut <&[u8]>::clone(&buf), &mut compressed)?;
+        compressed.end()?;
+        let compressed_size = compressed_data.get_ref().len() as u64;
 
+        // store the uncompressed blob if the compressed version has bigger size
+        let final_data = if compressed_blob && compressed_size >= uncompressed_size {
+            compressed_blob = false;
+            buf
+        } else {
+            compressed_data.get_ref()
+        };
+
+        hasher.update(final_data);
         let digest = hasher.finalize();
         let media_type = C::append_extension(MT::name());
-        let descriptor = Descriptor::new(digest.into(), size, media_type);
+        let descriptor = Descriptor::new(digest.into(), uncompressed_size, media_type);
+        let fs_verity_digest = get_fs_verity_digest(&compressed_data.get_ref()[..])?;
         let path = self.blob_path().join(descriptor.digest.to_string());
 
         // avoid replacing the data blob so we don't drop fsverity data
@@ -108,14 +130,17 @@ impl Image {
             if existing_digest != digest {
                 return Err(Error::new(
                     ErrorKind::AlreadyExists,
-                    "blob already exists and it's not content addressable",
+                    format!("blob already exists and it's not content addressable existing digest {}, new digest {}",
+                    hex::encode(existing_digest), hex::encode(digest))
                 )
                 .into());
             }
         } else {
+            let mut tmp = NamedTempFile::new_in(&self.oci_dir)?;
+            tmp.write_all(final_data)?;
             tmp.persist(path).map_err(|e| e.error)?;
         }
-        Ok(descriptor)
+        Ok((descriptor, fs_verity_digest, compressed_blob))
     }
 
     fn open_raw_blob(&self, digest: &Digest, verity: Option<&[u8]>) -> io::Result<fs::File> {
@@ -128,13 +153,13 @@ impl Image {
         Ok(file)
     }
 
-    pub fn open_compressed_blob<C: Compression>(
+    pub fn open_compressed_blob<C: for<'a> Compression<'a>>(
         &self,
         digest: &Digest,
         verity: Option<&[u8]>,
     ) -> io::Result<Box<dyn Decompressor>> {
         let f = self.open_raw_blob(digest, verity)?;
-        Ok(C::decompress(f))
+        C::decompress(f)
     }
 
     pub fn open_metadata_blob(
@@ -155,7 +180,7 @@ impl Image {
         Ok(file)
     }
 
-    pub fn open_rootfs_blob<C: Compression>(
+    pub fn open_rootfs_blob<C: for<'a> Compression<'a>>(
         &self,
         tag: &str,
         verity: Option<&[u8]>,
@@ -189,7 +214,11 @@ impl Image {
         } else {
             file_verity = None;
         }
-        let mut blob = self.open_raw_blob(digest, file_verity)?;
+        let mut blob = if chunk.compressed {
+            self.open_compressed_blob::<compression::Zstd>(digest, file_verity)?
+        } else {
+            self.open_compressed_blob::<compression::Noop>(digest, file_verity)?
+        };
         blob.seek(io::SeekFrom::Start(chunk.offset + addl_offset))?;
         let n = blob.read(buf)?;
         Ok(n)
@@ -229,13 +258,14 @@ impl Image {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+    type DefaultCompression = compression::Zstd;
 
     #[test]
     fn test_put_blob_correct_hash() {
         let dir = tempdir().unwrap();
         let image: Image = Image::new(dir.path()).unwrap();
-        let desc = image
-            .put_blob::<_, compression::Noop, media_types::Chunk>("meshuggah rocks".as_bytes())
+        let (desc, ..) = image
+            .put_blob::<compression::Noop, media_types::Chunk>("meshuggah rocks".as_bytes())
             .unwrap();
 
         const DIGEST: &str = "3abd5ce0f91f640d88dca1f26b37037b02415927cacec9626d87668a715ec12d";
@@ -256,8 +286,8 @@ mod tests {
     fn test_put_get_index() {
         let dir = tempdir().unwrap();
         let image = Image::new(dir.path()).unwrap();
-        let mut desc = image
-            .put_blob::<_, compression::Noop, media_types::Chunk>("meshuggah rocks".as_bytes())
+        let (mut desc, ..) = image
+            .put_blob::<DefaultCompression, media_types::Chunk>("meshuggah rocks".as_bytes())
             .unwrap();
         desc.set_name("foo");
         let mut index = Index::default();
@@ -275,10 +305,10 @@ mod tests {
         let dir = tempdir().unwrap();
         let image = Image::new(dir.path()).unwrap();
         let desc1 = image
-            .put_blob::<_, compression::Noop, media_types::Chunk>("meshuggah rocks".as_bytes())
+            .put_blob::<DefaultCompression, media_types::Chunk>("meshuggah rocks".as_bytes())
             .unwrap();
         let desc2 = image
-            .put_blob::<_, compression::Noop, media_types::Chunk>("meshuggah rocks".as_bytes())
+            .put_blob::<DefaultCompression, media_types::Chunk>("meshuggah rocks".as_bytes())
             .unwrap();
         assert_eq!(desc1, desc2);
     }

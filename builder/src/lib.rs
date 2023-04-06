@@ -1,8 +1,11 @@
+use common::{AVG_CHUNK_SIZE, MAX_CHUNK_SIZE, MIN_CHUNK_SIZE};
+use compression::Compression;
 use fsverity_helpers::{
     check_fs_verity, fsverity_enable, get_fs_verity_digest, InnerHashAlgorithm,
     FS_VERITY_BLOCK_SIZE_DEFAULT,
 };
 use oci::Digest;
+use std::any::Any;
 use std::backtrace::Backtrace;
 use std::cmp::min;
 use std::collections::{BTreeMap, HashMap};
@@ -29,12 +32,6 @@ use nix::errno::Errno;
 use fastcdc::v2020::StreamCDC;
 mod filesystem;
 use filesystem::FilesystemStream;
-
-// Quoting from https://github.com/ronomon/deduplication
-// An average chunk size of 64 KB is recommended for optimal end-to-end deduplication and compression efficiency
-const MIN_CHUNK_SIZE: u32 = 16 * 1024;
-const AVG_CHUNK_SIZE: u32 = 64 * 1024;
-const MAX_CHUNK_SIZE: u32 = 256 * 1024;
 
 const PUZZLEFS_IMAGE_MANIFEST_VERSION: u64 = 1;
 
@@ -78,7 +75,7 @@ struct Other {
     additional: Option<InodeAdditional>,
 }
 
-fn process_chunks(
+fn process_chunks<C: for<'a> Compression<'a> + Any>(
     oci: &Image,
     mut chunker: StreamCDC,
     files: &mut [File],
@@ -98,12 +95,13 @@ fn process_chunks(
         let chunk = result.unwrap();
         let mut chunk_used: u64 = 0;
 
-        let desc = oci.put_blob::<_, compression::Noop, media_types::Chunk>(&*chunk.data)?;
+        let (desc, fs_verity_digest, compressed) =
+            oci.put_blob::<C, media_types::Chunk>(&chunk.data)?;
         let blob_kind = BlobRefKind::Other {
             digest: desc.digest.underlying(),
         };
 
-        let verity_hash = get_fs_verity_digest(&chunk.data)?;
+        let verity_hash = fs_verity_digest;
         verity_data.insert(desc.digest.underlying(), verity_hash);
 
         while chunk_used < chunk.length as u64 {
@@ -115,6 +113,7 @@ fn process_chunks(
             let blob = BlobRef {
                 offset: chunk_used,
                 kind: blob_kind,
+                compressed,
             };
 
             file.as_mut()
@@ -155,7 +154,7 @@ fn inode_encoded_size(num_inodes: usize) -> usize {
     format::cbor_size_of_list_header(num_inodes) + num_inodes * format::INODE_WIRE_SIZE
 }
 
-fn build_delta(
+fn build_delta<C: for<'a> Compression<'a> + Any>(
     rootfs: &Path,
     oci: &Image,
     mut existing: Option<PuzzleFS>,
@@ -345,7 +344,7 @@ fn build_delta(
         AVG_CHUNK_SIZE,
         MAX_CHUNK_SIZE,
     );
-    process_chunks(oci, fcdc, &mut files, verity_data)?;
+    process_chunks::<C>(oci, fcdc, &mut files, verity_data)?;
 
     // total inode serailized size
     let num_inodes = pfs_inodes.len() + dirs.len() + files.len() + others.len();
@@ -373,6 +372,7 @@ fn build_delta(
                         Ok(BlobRef {
                             offset: offset as u64,
                             kind: BlobRefKind::Local,
+                            compressed: false,
                         })
                     })
                     .transpose()?;
@@ -404,6 +404,7 @@ fn build_delta(
                         Ok(BlobRef {
                             offset: offset as u64,
                             kind: BlobRefKind::Local,
+                            compressed: false,
                         })
                     })
                     .transpose()?;
@@ -433,6 +434,7 @@ fn build_delta(
                         Ok(BlobRef {
                             offset: offset as u64,
                             kind: BlobRefKind::Local,
+                            compressed: false,
                         })
                     })
                     .transpose()?;
@@ -454,21 +456,25 @@ fn build_delta(
     md_buf.append(&mut files_buf);
     md_buf.append(&mut others_buf);
 
-    let desc = oci.put_blob::<_, compression::Noop, media_types::Inodes>(md_buf.as_slice())?;
+    let (desc, ..) = oci.put_blob::<compression::Noop, media_types::Inodes>(md_buf.as_slice())?;
     let verity_hash = get_fs_verity_digest(md_buf.as_slice())?;
     verity_data.insert(desc.digest.underlying(), verity_hash);
 
     Ok(desc)
 }
 
-pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Descriptor> {
+pub fn build_initial_rootfs<C: for<'a> Compression<'a> + Any>(
+    rootfs: &Path,
+    oci: &Image,
+) -> Result<Descriptor> {
     let mut verity_data: VerityData = BTreeMap::new();
-    let desc = build_delta(rootfs, oci, None, &mut verity_data)?;
+    let desc = build_delta::<C>(rootfs, oci, None, &mut verity_data)?;
     let metadatas = [BlobRef {
         offset: 0,
         kind: BlobRefKind::Other {
             digest: desc.digest.underlying(),
         },
+        compressed: false,
     }]
     .to_vec();
 
@@ -481,12 +487,14 @@ pub fn build_initial_rootfs(rootfs: &Path, oci: &Image) -> Result<Descriptor> {
             manifest_version: PUZZLEFS_IMAGE_MANIFEST_VERSION,
         },
     )?;
-    oci.put_blob::<_, compression::Noop, media_types::Rootfs>(rootfs_buf.as_slice())
+    Ok(oci
+        .put_blob::<compression::Noop, media_types::Rootfs>(rootfs_buf.as_slice())?
+        .0)
 }
 
 // add_rootfs_delta adds whatever the delta between the current rootfs and the puzzlefs
 // representation from the tag is.
-pub fn add_rootfs_delta(
+pub fn add_rootfs_delta<C: for<'a> Compression<'a> + Any>(
     rootfs_path: &Path,
     oci: Image,
     tag: &str,
@@ -495,7 +503,6 @@ pub fn add_rootfs_delta(
     let pfs = PuzzleFS::open(oci, tag, None)?;
     let oci = Arc::clone(&pfs.oci);
     let mut rootfs = oci.open_rootfs_blob::<compression::Noop>(tag, None)?;
-
     if rootfs.manifest_version != PUZZLEFS_IMAGE_MANIFEST_VERSION {
         return Err(WireFormatError::InvalidImageVersion(
             rootfs.manifest_version.to_string(),
@@ -503,12 +510,13 @@ pub fn add_rootfs_delta(
         ));
     }
 
-    let desc = build_delta(rootfs_path, &oci, Some(pfs), &mut verity_data)?;
+    let desc = build_delta::<C>(rootfs_path, &oci, Some(pfs), &mut verity_data)?;
     let br = BlobRef {
         kind: BlobRefKind::Other {
             digest: desc.digest.underlying(),
         },
         offset: 0,
+        compressed: false,
     };
 
     if !rootfs.metadatas.iter().any(|&x| x == br) {
@@ -519,7 +527,8 @@ pub fn add_rootfs_delta(
     let mut rootfs_buf = Vec::new();
     serde_cbor::to_writer(&mut rootfs_buf, &rootfs)?;
     Ok((
-        oci.put_blob::<_, compression::Noop, media_types::Rootfs>(rootfs_buf.as_slice())?,
+        oci.put_blob::<compression::Noop, media_types::Rootfs>(rootfs_buf.as_slice())?
+            .0,
         oci,
     ))
 }
@@ -568,7 +577,7 @@ pub fn enable_fs_verity(oci: Image, tag: &str, manifest_root_hash: &str) -> Resu
 
 // TODO: figure out how to guard this with #[cfg(test)]
 pub fn build_test_fs(path: &Path, image: &Image) -> Result<Descriptor> {
-    build_initial_rootfs(path, image)
+    build_initial_rootfs::<compression::Zstd>(path, image)
 }
 
 #[cfg(test)]
@@ -580,9 +589,13 @@ pub mod tests {
     use tempfile::tempdir;
 
     use format::{DirList, InodeMode};
+    use oci::Digest;
     use reader::WalkPuzzleFS;
+    use std::convert::TryFrom;
     use std::path::PathBuf;
     use tempfile::TempDir;
+
+    type DefaultCompression = compression::Zstd;
 
     #[test]
     fn test_fs_generation() {
@@ -604,10 +617,17 @@ pub mod tests {
         // there should be a blob that matches the hash of the test data, since it all gets input
         // as one chunk and there's only one file
         const FILE_DIGEST: &str =
-            "d9e749d9367fc908876749d6502eb212fee88c9a94892fb07da5ef3ba8bc39ed";
+            "a7b1fbc3c77f9ffc40c051e3608d607d63eebcd23c559958043eccb64bdab7ff";
 
         let md = fs::symlink_metadata(image.blob_path().join(FILE_DIGEST)).unwrap();
         assert!(md.is_file());
+
+        let mut decompressor = image
+            .open_compressed_blob::<DefaultCompression>(
+                &Digest::try_from(FILE_DIGEST).unwrap(),
+                None,
+            )
+            .unwrap();
 
         let metadata_digest = rootfs.metadatas[0].try_into().unwrap();
         let mut blob = image.open_metadata_blob(&metadata_digest, None).unwrap();
@@ -637,7 +657,10 @@ pub mod tests {
         if let InodeMode::Reg { offset } = inodes[1].mode {
             let chunks = blob.read_file_chunks(offset).unwrap();
             assert_eq!(chunks.len(), 1);
-            assert_eq!(chunks[0].len, md.len());
+            assert_eq!(
+                chunks[0].len,
+                decompressor.get_uncompressed_length().unwrap()
+            );
         } else {
             panic!("bad inode mode: {:?}", inodes[1].mode);
         }
@@ -659,7 +682,7 @@ pub mod tests {
         )
         .unwrap();
 
-        let (desc, image) = add_rootfs_delta(&delta_dir, image, tag).unwrap();
+        let (desc, image) = add_rootfs_delta::<DefaultCompression>(&delta_dir, image, tag).unwrap();
         let new_tag = "test2";
         image.add_tag(new_tag, desc).unwrap();
         let delta = image

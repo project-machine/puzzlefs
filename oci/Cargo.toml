@@ -9,7 +9,6 @@ edition = "2018"
 [dependencies]
 hex = "*"
 sha2 = "*"
-tee = "*"
 tempfile = "*"
 compression = { path = "../compression" }
 format = { path = "../format" }

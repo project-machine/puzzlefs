@@ -29,7 +29,7 @@ pub struct ZstdCompressor {
 }
 
 impl Compressor for ZstdCompressor {
-    fn end(&mut self) -> io::Result<()> {
+    fn end(mut self: Box<Self>) -> io::Result<()> {
         let size = self.stream.end_stream(&mut self.buf).map_err(err_to_io)?;
         self.f.write_all(&self.buf[0..size])
     }
@@ -59,7 +59,11 @@ pub struct ZstdDecompressor {
     uncompressed_length: u64,
 }
 
-impl Decompressor for ZstdDecompressor {}
+impl Decompressor for ZstdDecompressor {
+    fn get_uncompressed_length(&mut self) -> io::Result<u64> {
+        Ok(self.uncompressed_length)
+    }
+}
 
 impl io::Seek for ZstdDecompressor {
     fn seek(&mut self, offset: io::SeekFrom) -> io::Result<u64> {
@@ -100,22 +104,22 @@ impl io::Read for ZstdDecompressor {
     }
 }
 
-pub struct Zstd {}
+pub struct ZstdSeekable {}
 
-impl Compression for Zstd {
-    fn compress(dest: fs::File) -> Box<dyn Compressor> {
+impl Compression for ZstdSeekable {
+    fn compress(dest: fs::File) -> io::Result<Box<dyn Compressor>> {
         // a "pretty high" compression level, since decompression should be nearly the same no
         // matter what compression level. Maybe we should turn this to 22 or whatever the max is...
-        let stream = SeekableCStream::new(17, FRAME_SIZE).unwrap();
-        Box::new(ZstdCompressor {
+        let stream = SeekableCStream::new(17, FRAME_SIZE).map_err(err_to_io)?;
+        Ok(Box::new(ZstdCompressor {
             f: dest,
             stream,
             buf: vec![0_u8; FRAME_SIZE],
-        })
+        }))
     }
 
-    fn decompress(source: fs::File) -> Box<dyn Decompressor> {
-        let stream = Seekable::init(Box::new(source)).unwrap();
+    fn decompress(source: fs::File) -> io::Result<Box<dyn Decompressor>> {
+        let stream = Seekable::init(Box::new(source)).map_err(err_to_io)?;
 
         // zstd-seekable doesn't like it when we pass a buffer past the end of the uncompressed
         // stream, so let's figure out the size of the uncompressed file so we can implement
@@ -123,11 +127,11 @@ impl Compression for Zstd {
         let uncompressed_length = (0..stream.get_num_frames())
             .map(|i| stream.get_frame_decompressed_size(i) as u64)
             .sum();
-        Box::new(ZstdDecompressor {
+        Ok(Box::new(ZstdDecompressor {
             stream,
             offset: 0,
             uncompressed_length,
-        })
+        }))
     }
 
     fn append_extension(media_type: &str) -> String {
@@ -138,15 +142,15 @@ impl Compression for Zstd {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tests::{compress_decompress_noop, compression_is_seekable};
+    use crate::tests::{compress_decompress, compression_is_seekable};
 
     #[test]
-    fn test_ztsd_roundtrip() {
-        compress_decompress_noop::<Zstd>();
+    fn test_ztsd_roundtrip() -> anyhow::Result<()> {
+        compress_decompress::<ZstdSeekable>()
     }
 
     #[test]
-    fn test_zstd_seekable() {
-        compression_is_seekable::<Zstd>();
+    fn test_zstd_seekable() -> anyhow::Result<()> {
+        compression_is_seekable::<ZstdSeekable>()
     }
 }

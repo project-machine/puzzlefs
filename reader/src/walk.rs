@@ -77,7 +77,7 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
-    use builder::{build_initial_rootfs, build_test_fs};
+    use builder::build_test_fs;
     use oci::Image;
 
     use super::*;
@@ -126,7 +126,7 @@ mod tests {
             xattr::set(f, "user.meshuggah", b"rocks").unwrap();
         }
 
-        let rootfs_desc = build_initial_rootfs(&rootfs, &image).unwrap();
+        let rootfs_desc = build_test_fs(&rootfs, &image).unwrap();
 
         image.add_tag("test", rootfs_desc).unwrap();
         let mut pfs = PuzzleFS::open(image, "test", None).unwrap();

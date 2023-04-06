@@ -21,6 +21,7 @@ use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::error::{Result, WireFormatError};
+use hex::FromHexError;
 
 mod cbor_helpers;
 use cbor_helpers::cbor_get_array_size;
@@ -93,7 +94,10 @@ const BLOB_REF_SIZE: usize = 1 /* mode */ + 32 /* digest */ + 8 /* offset */;
 pub struct BlobRef {
     pub offset: u64,
     pub kind: BlobRefKind,
+    pub compressed: bool,
 }
+
+const COMPRESSED_BIT: u8 = 1 << 7;
 
 impl BlobRef {
     fn fixed_length_serialize(&self, state: &mut [u8; BLOB_REF_SIZE]) {
@@ -105,6 +109,10 @@ impl BlobRef {
                 state[9..41].copy_from_slice(digest);
             }
         };
+        // reuse state[8] for compression, since it only stores the BlobRefKind enum variant
+        if self.compressed {
+            state[8] |= COMPRESSED_BIT;
+        }
     }
 
     fn fixed_length_deserialize<E: SerdeError>(
@@ -112,7 +120,8 @@ impl BlobRef {
     ) -> std::result::Result<BlobRef, E> {
         let offset = u64::from_le_bytes(state[0..8].try_into().unwrap());
 
-        let kind = match state[8] {
+        let compressed = (state[8] & COMPRESSED_BIT) != 0;
+        let kind = match state[8] & !COMPRESSED_BIT {
             0 => BlobRefKind::Local,
             1 => BlobRefKind::Other {
                 digest: state[9..41].try_into().unwrap(),
@@ -125,7 +134,11 @@ impl BlobRef {
             }
         };
 
-        Ok(BlobRef { offset, kind })
+        Ok(BlobRef {
+            offset,
+            kind,
+            compressed,
+        })
     }
 }
 
@@ -521,6 +534,7 @@ mod tests {
                 additional: Some(BlobRef {
                     offset: 42,
                     kind: BlobRefKind::Local,
+                    compressed: false,
                 }),
             },
         ];
@@ -547,6 +561,7 @@ mod tests {
         let local = BlobRef {
             offset: 42,
             kind: BlobRefKind::Local,
+            compressed: true,
         };
         blobref_roundtrip(local)
     }
@@ -559,6 +574,7 @@ mod tests {
         let other = BlobRef {
             offset: 42,
             kind: BlobRefKind::Other { digest },
+            compressed: true,
         };
         blobref_roundtrip(other)
     }
@@ -707,6 +723,17 @@ impl Serialize for Digest {
     {
         let val = format!("sha256:{}", hex::encode(self.0));
         serializer.serialize_str(&val)
+    }
+}
+
+impl TryFrom<&str> for Digest {
+    type Error = FromHexError;
+    fn try_from(s: &str) -> std::result::Result<Self, Self::Error> {
+        let digest = hex::decode(s)?;
+        let digest: [u8; SHA256_BLOCK_SIZE] = digest
+            .try_into()
+            .map_err(|_| FromHexError::InvalidStringLength)?;
+        Ok(Digest(digest))
     }
 }
 

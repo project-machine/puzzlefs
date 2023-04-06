@@ -10,6 +10,7 @@ format = { path = "../format" }
 oci = { path = "../oci" }
 reader = { path = "../reader" }
 fsverity_helpers = { path = "../fsverity_helpers" }
+common = { path = "../common" }
 walkdir = "2"
 serde_cbor = "*"
 fastcdc = "3.0.0"

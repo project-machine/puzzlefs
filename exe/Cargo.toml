@@ -20,6 +20,7 @@ oci = { path = "../oci" }
 reader = { path = "../reader" }
 extractor = { path = "../extractor" }
 fsverity_helpers = { path = "../fsverity_helpers" }
+compression = { path = "../compression" }
 hex = "*"
 
 [dev-dependencies]

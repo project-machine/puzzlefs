@@ -157,7 +157,6 @@ mod tests {
     use std::fs;
     use std::fs::File;
 
-    use builder::build_initial_rootfs;
     use builder::build_test_fs;
     use oci::Image;
     use std::collections::HashMap;
@@ -195,7 +194,7 @@ mod tests {
             }
         }
 
-        let rootfs_desc = build_initial_rootfs(&rootfs, &image).unwrap();
+        let rootfs_desc = build_test_fs(&rootfs, &image).unwrap();
 
         image.add_tag("test", rootfs_desc).unwrap();
 
@@ -246,7 +245,7 @@ mod tests {
 
         std::fs::set_permissions(foo, Permissions::from_mode(TESTED_PERMISSION)).unwrap();
 
-        let rootfs_desc = build_initial_rootfs(&rootfs, &image).unwrap();
+        let rootfs_desc = build_test_fs(&rootfs, &image).unwrap();
 
         image.add_tag("test", rootfs_desc).unwrap();
 
@@ -285,7 +284,7 @@ mod tests {
             fs::metadata(&bar).unwrap().ino()
         );
 
-        let rootfs_desc = build_initial_rootfs(&rootfs, &image).unwrap();
+        let rootfs_desc = build_test_fs(&rootfs, &image).unwrap();
 
         image.add_tag("test", rootfs_desc).unwrap();
 
