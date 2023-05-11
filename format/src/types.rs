@@ -11,6 +11,7 @@ use std::fs;
 use std::io;
 use std::io::Read;
 use std::mem;
+use std::os::unix::ffi::OsStringExt;
 use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 use std::path::Path;
 use std::vec::Vec;
@@ -190,7 +191,7 @@ pub struct Metadata {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DirEnt {
     pub ino: Ino,
-    pub name: OsString,
+    pub name: Vec<u8>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -583,14 +584,14 @@ mod tests {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct InodeAdditional {
     pub xattrs: Vec<Xattr>,
-    pub symlink_target: Option<OsString>,
+    pub symlink_target: Option<Vec<u8>>,
 }
 
 impl InodeAdditional {
     pub fn new(p: &Path, md: &fs::Metadata) -> io::Result<Option<Self>> {
         let symlink_target = if md.file_type().is_symlink() {
             let t = fs::read_link(p)?;
-            Some(t.into())
+            Some(OsString::from(t).into_vec())
         } else {
             None
         };
@@ -610,7 +611,7 @@ impl InodeAdditional {
             .map(|xa| {
                 let value = xattr::get(p, &xa)?;
                 Ok(Xattr {
-                    key: xa,
+                    key: xa.into_vec(),
                     val: value.unwrap(),
                 })
             })
@@ -620,7 +621,7 @@ impl InodeAdditional {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Xattr {
-    pub key: OsString,
+    pub key: Vec<u8>,
     pub val: Vec<u8>,
 }
 

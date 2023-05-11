@@ -9,6 +9,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::os::raw::c_int;
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::ffi::OsStringExt;
 use std::os::unix::fs::FileTypeExt;
 use std::path::{Path, PathBuf};
 use std::thread;
@@ -150,7 +151,7 @@ impl Fuse {
         match kind {
             FileType::Symlink => inode
                 .additional
-                .and_then(|add| add.symlink_target)
+                .and_then(|add| add.symlink_target.map(OsString::from_vec))
                 .ok_or(error),
             _ => Err(error),
         }
@@ -164,7 +165,7 @@ impl Fuse {
                 add.xattrs
                     .iter()
                     .flat_map(|x| {
-                        CString::new(x.key.as_bytes())
+                        CString::new(x.key.as_slice())
                             .expect("xattr is a valid string")
                             .as_bytes_with_nul()
                             .to_vec()
@@ -180,7 +181,11 @@ impl Fuse {
         let inode = self.pfs.find_inode(ino)?;
         inode
             .additional
-            .and_then(|add| add.xattrs.into_iter().find(|elem| elem.key == name))
+            .and_then(|add| {
+                add.xattrs
+                    .into_iter()
+                    .find(|elem| elem.key == name.as_bytes())
+            })
             .map(|xattr| xattr.val)
             .ok_or_else(|| WireFormatError::from_errno(Errno::ENODATA))
     }

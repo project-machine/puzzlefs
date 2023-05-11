@@ -7,7 +7,9 @@ use nix::unistd::{chown, mkfifo, symlinkat, Gid, Uid};
 use oci::Image;
 use reader::{InodeMode, PuzzleFS, WalkPuzzleFS};
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::fs::Permissions;
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
 use std::{fs, io};
@@ -108,7 +110,7 @@ pub fn extract_rootfs(oci_dir: &str, tag: &str, extract_dir: &str) -> anyhow::Re
                     format::InodeMode::Lnk => {
                         let target = dir_entry.inode.symlink_target()?;
                         is_symlink = true;
-                        symlinkat(target.as_os_str(), None, &path)?;
+                        symlinkat(target, None, &path)?;
                     }
                     format::InodeMode::Sock => {
                         todo!();
@@ -124,7 +126,7 @@ pub fn extract_rootfs(oci_dir: &str, tag: &str, extract_dir: &str) -> anyhow::Re
         }
         if let Some(x) = dir_entry.inode.additional {
             for x in &x.xattrs {
-                xattr::set(&path, &x.key, &x.val)?;
+                xattr::set(&path, OsStr::from_bytes(&x.key), &x.val)?;
             }
         }
 

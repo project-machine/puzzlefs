@@ -3,6 +3,8 @@ use std::cmp::min;
 use std::convert::TryFrom;
 use std::ffi::{OsStr, OsString};
 use std::io;
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::ffi::OsStringExt;
 use std::path::{Component, Path};
 use std::sync::Arc;
 
@@ -30,7 +32,7 @@ impl Inode {
                     .read_dir_list(offset)?
                     .entries
                     .iter_mut()
-                    .map(|de| (de.name.clone(), de.ino))
+                    .map(|de| (OsString::from_vec(de.name.clone()), de.ino))
                     .collect::<Vec<(OsString, Ino)>>();
                 entries.sort_by(|(a, _), (b, _)| a.cmp(b));
                 InodeMode::Dir { entries }
@@ -75,10 +77,14 @@ impl Inode {
         Ok(chunks.iter().map(|c| c.len).sum())
     }
 
-    pub fn symlink_target(&self) -> Result<&OsString> {
+    pub fn symlink_target(&self) -> Result<&OsStr> {
         self.additional
             .as_ref()
-            .and_then(|a| a.symlink_target.as_ref())
+            .and_then(|a| {
+                a.symlink_target
+                    .as_ref()
+                    .map(|x| OsStr::from_bytes(x.as_slice()))
+            })
             .ok_or_else(|| WireFormatError::from_errno(Errno::ENOENT))
     }
 }
