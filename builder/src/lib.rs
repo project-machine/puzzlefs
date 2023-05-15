@@ -13,6 +13,7 @@ use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io;
 use std::os::fd::AsRawFd;
+use std::os::unix::ffi::OsStringExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::sync::Arc;
@@ -57,7 +58,10 @@ struct Dir {
 
 impl Dir {
     fn add_entry(&mut self, name: OsString, ino: Ino) {
-        self.dir_list.entries.push(DirEnt { name, ino });
+        self.dir_list.entries.push(DirEnt {
+            name: OsString::into_vec(name),
+            ino,
+        });
     }
 }
 
@@ -644,7 +648,7 @@ pub mod tests {
             let dir_list: DirList = blob.read_dir_list(offset).unwrap();
             assert_eq!(dir_list.entries.len(), 1);
             assert_eq!(dir_list.entries[0].ino, 2);
-            assert_eq!(dir_list.entries[0].name, "SekienAkashita.jpg");
+            assert_eq!(dir_list.entries[0].name, b"SekienAkashita.jpg");
         } else {
             panic!("bad inode mode: {:?}", inodes[0].mode);
         }

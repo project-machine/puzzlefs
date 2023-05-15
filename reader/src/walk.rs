@@ -140,7 +140,7 @@ mod tests {
 
         fn check_inode_xattrs(inode: Inode) {
             let additional = inode.additional.unwrap();
-            assert_eq!(additional.xattrs[0].key, "user.meshuggah");
+            assert_eq!(additional.xattrs[0].key, b"user.meshuggah");
             assert_eq!(additional.xattrs[0].val, b"rocks");
         }
 
