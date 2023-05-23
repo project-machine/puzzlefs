@@ -3,6 +3,8 @@ use std::path::PathBuf;
 
 use format::Result;
 use oci::Image;
+use std::ffi::OsStr;
+use std::os::unix::ffi::OsStrExt;
 use std::sync::Arc;
 
 use super::puzzlefs::{FileReader, Inode, InodeMode, PuzzleFS};
@@ -33,7 +35,7 @@ impl<'a> WalkPuzzleFS<'a> {
         if let InodeMode::Dir { ref entries } = dir.inode.mode {
             for (name, ino) in entries {
                 let inode = self.pfs.find_inode(*ino)?;
-                let path = dir.path.join(name);
+                let path = dir.path.join(OsStr::from_bytes(name));
                 self.q.push_back(DirEntry {
                     oci: Arc::clone(&self.pfs.oci),
                     path,
