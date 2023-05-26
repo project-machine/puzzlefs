@@ -469,6 +469,7 @@ fn build_delta<C: for<'a> Compression<'a> + Any>(
 pub fn build_initial_rootfs<C: for<'a> Compression<'a> + Any>(
     rootfs: &Path,
     oci: &Image,
+    include_verity_data: bool,
 ) -> Result<Descriptor> {
     let mut verity_data: VerityData = BTreeMap::new();
     let desc = build_delta::<C>(rootfs, oci, None, &mut verity_data)?;
@@ -486,7 +487,11 @@ pub fn build_initial_rootfs<C: for<'a> Compression<'a> + Any>(
         &mut rootfs_buf,
         &Rootfs {
             metadatas,
-            fs_verity_data: verity_data,
+            fs_verity_data: if include_verity_data {
+                Some(verity_data)
+            } else {
+                None
+            },
             manifest_version: PUZZLEFS_IMAGE_MANIFEST_VERSION,
         },
     )?;
@@ -501,6 +506,7 @@ pub fn add_rootfs_delta<C: for<'a> Compression<'a> + Any>(
     rootfs_path: &Path,
     oci: Image,
     tag: &str,
+    include_verity_data: bool,
 ) -> Result<(Descriptor, Arc<Image>)> {
     let mut verity_data: VerityData = BTreeMap::new();
     let pfs = PuzzleFS::open(oci, tag, None)?;
@@ -526,7 +532,16 @@ pub fn add_rootfs_delta<C: for<'a> Compression<'a> + Any>(
         rootfs.metadatas.insert(0, br);
     }
 
-    rootfs.fs_verity_data.extend(verity_data);
+    if include_verity_data {
+        if let Some(ref mut fs_verity_data) = rootfs.fs_verity_data {
+            fs_verity_data.extend(verity_data);
+        } else {
+            return Err(WireFormatError::InvalidFsVerityData(
+                "missing verity data".to_string(),
+                Backtrace::capture(),
+            ));
+        }
+    }
     let mut rootfs_buf = Vec::new();
     serde_cbor::to_writer(&mut rootfs_buf, &rootfs)?;
     Ok((
@@ -556,7 +571,16 @@ pub fn enable_fs_verity(oci: Image, tag: &str, manifest_root_hash: &str) -> Resu
     let oci = Arc::clone(&pfs.oci);
     let rootfs = oci.open_rootfs_blob::<compression::Noop>(tag, None)?;
 
-    for (content_addressed_file, verity_hash) in rootfs.fs_verity_data {
+    let verity_data = if let Some(verity_data) = rootfs.fs_verity_data {
+        verity_data
+    } else {
+        return Err(WireFormatError::InvalidFsVerityData(
+            "missing verity data".to_string(),
+            Backtrace::capture(),
+        ));
+    };
+
+    for (content_addressed_file, verity_hash) in verity_data {
         let file_path = oci
             .blob_path()
             .join(Digest::new(&content_addressed_file).to_string());
@@ -580,7 +604,7 @@ pub fn enable_fs_verity(oci: Image, tag: &str, manifest_root_hash: &str) -> Resu
 
 // TODO: figure out how to guard this with #[cfg(test)]
 pub fn build_test_fs(path: &Path, image: &Image) -> Result<Descriptor> {
-    build_initial_rootfs::<compression::Zstd>(path, image)
+    build_initial_rootfs::<compression::Zstd>(path, image, true)
 }
 
 #[cfg(test)]
@@ -685,7 +709,8 @@ pub mod tests {
         )
         .unwrap();
 
-        let (desc, image) = add_rootfs_delta::<DefaultCompression>(&delta_dir, image, tag).unwrap();
+        let (desc, image) =
+            add_rootfs_delta::<DefaultCompression>(&delta_dir, image, tag, true).unwrap();
         let new_tag = "test2";
         image.add_tag(new_tag, desc).unwrap();
         let delta = image

@@ -42,6 +42,8 @@ struct Build {
     base_layer: Option<String>,
     #[arg(short, long, value_name = "compressed")]
     compression: bool,
+    #[arg(long, value_name = "omit-verity")]
+    omit_verity: bool,
 }
 
 #[derive(Args)]
@@ -154,21 +156,22 @@ fn main() -> anyhow::Result<()> {
             let rootfs = Path::new(&b.rootfs);
             let oci_dir = Path::new(&b.oci_dir);
             let image = Image::new(oci_dir)?;
+            let include_verity_data = !b.omit_verity;
             let new_image = match b.base_layer {
                 Some(base_layer) => {
                     let (desc, image) = if b.compression {
-                        add_rootfs_delta::<Zstd>(rootfs, image, &base_layer)?
+                        add_rootfs_delta::<Zstd>(rootfs, image, &base_layer, include_verity_data)?
                     } else {
-                        add_rootfs_delta::<Noop>(rootfs, image, &base_layer)?
+                        add_rootfs_delta::<Noop>(rootfs, image, &base_layer, include_verity_data)?
                     };
                     image.add_tag(&b.tag, desc)?;
                     image
                 }
                 None => {
                     let desc = if b.compression {
-                        build_initial_rootfs::<Zstd>(rootfs, &image)?
+                        build_initial_rootfs::<Zstd>(rootfs, &image, include_verity_data)?
                     } else {
-                        build_initial_rootfs::<Noop>(rootfs, &image)?
+                        build_initial_rootfs::<Noop>(rootfs, &image, include_verity_data)?
                     };
                     image.add_tag(&b.tag, desc)?;
                     Arc::new(image)

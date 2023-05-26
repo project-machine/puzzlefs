@@ -163,7 +163,14 @@ impl PuzzleFS {
     pub fn open(oci: Image, tag: &str, manifest_verity: Option<&[u8]>) -> format::Result<PuzzleFS> {
         let rootfs = oci.open_rootfs_blob::<compression::Noop>(tag, manifest_verity)?;
         let verity_data = if manifest_verity.is_some() {
-            Some(rootfs.fs_verity_data)
+            if rootfs.fs_verity_data.is_some() {
+                rootfs.fs_verity_data
+            } else {
+                return Err(WireFormatError::InvalidFsVerityData(
+                    "missing verity data".to_string(),
+                    Backtrace::capture(),
+                ));
+            }
         } else {
             None
         };

@@ -72,7 +72,7 @@ fn read_one_from_slice<'a, T: Deserialize<'a>>(bytes: &'a [u8]) -> Result<T> {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Rootfs {
     pub metadatas: Vec<BlobRef>,
-    pub fs_verity_data: VerityData,
+    pub fs_verity_data: Option<VerityData>,
     pub manifest_version: u64,
 }
 
