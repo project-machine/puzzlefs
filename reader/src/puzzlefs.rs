@@ -1,10 +1,9 @@
 use std::backtrace::Backtrace;
 use std::cmp::min;
 use std::convert::TryFrom;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
 use std::io;
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::ffi::OsStringExt;
 use std::path::{Component, Path};
 use std::sync::Arc;
 
@@ -32,8 +31,8 @@ impl Inode {
                     .read_dir_list(offset)?
                     .entries
                     .iter_mut()
-                    .map(|de| (OsString::from_vec(de.name.clone()), de.ino))
-                    .collect::<Vec<(OsString, Ino)>>();
+                    .map(|de| (de.name.clone(), de.ino))
+                    .collect::<Vec<(Vec<u8>, Ino)>>();
                 entries.sort_by(|(a, _), (b, _)| a.cmp(b));
                 InodeMode::Dir { entries }
             }
@@ -52,14 +51,14 @@ impl Inode {
         })
     }
 
-    pub fn dir_entries(&self) -> Result<&Vec<(OsString, Ino)>> {
+    pub fn dir_entries(&self) -> Result<&Vec<(Vec<u8>, Ino)>> {
         match &self.mode {
             InodeMode::Dir { entries } => Ok(entries),
             _ => Err(WireFormatError::from_errno(Errno::ENOTDIR)),
         }
     }
 
-    pub fn dir_lookup(&self, name: &OsStr) -> Result<u64> {
+    pub fn dir_lookup(&self, name: &[u8]) -> Result<u64> {
         let entries = self.dir_entries()?;
         entries
             .iter()
@@ -92,7 +91,7 @@ impl Inode {
 #[derive(Debug)]
 pub enum InodeMode {
     File { chunks: Vec<FileChunk> },
-    Dir { entries: Vec<(OsString, Ino)> },
+    Dir { entries: Vec<(Vec<u8>, Ino)> },
     Other,
 }
 
@@ -224,7 +223,9 @@ impl PuzzleFS {
             match comp {
                 Component::Normal(p) => {
                     if let InodeMode::Dir { entries } = cur.mode {
-                        if let Some((_, ino)) = entries.into_iter().find(|(path, _)| path == p) {
+                        if let Some((_, ino)) =
+                            entries.into_iter().find(|(path, _)| path == p.as_bytes())
+                        {
                             cur = self.find_inode(ino)?;
                             continue;
                         }

@@ -69,7 +69,7 @@ impl Fuse {
 
     fn _lookup(&mut self, parent: u64, name: &OsStr) -> Result<FileAttr> {
         let dir = self.pfs.find_inode(parent)?;
-        let ino = dir.dir_lookup(name)?;
+        let ino = dir.dir_lookup(name.as_bytes())?;
         self._getattr(ino)
     }
 
@@ -136,7 +136,7 @@ impl Fuse {
             let kind = mode_to_fuse_type(&inode)?;
 
             // if the buffer is full, let's skip the extra lookups
-            if reply.add(ino, (index + 1) as i64, kind, name) {
+            if reply.add(ino, (index + 1) as i64, kind, OsStr::from_bytes(name)) {
                 break;
             }
         }

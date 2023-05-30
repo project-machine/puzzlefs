@@ -13,7 +13,7 @@ use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io;
 use std::os::fd::AsRawFd;
-use std::os::unix::ffi::OsStringExt;
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::sync::Arc;
@@ -236,12 +236,11 @@ fn build_delta<C: for<'a> Compression<'a> + Any>(
             .get_mut(&this_metadata.ino())
             .ok_or_else(|| WireFormatError::from_errno(Errno::ENOENT))?;
         for (name, ino) in existing_dirents {
-            if !(new_dirents)
-                .iter()
-                .any(|new| new.path().file_name().unwrap_or_else(|| OsStr::new("")) == name)
-            {
+            if !(new_dirents).iter().any(|new| {
+                new.path().file_name().unwrap_or_else(|| OsStr::new("")) == OsStr::from_bytes(&name)
+            }) {
                 pfs_inodes.push(Inode::new_whiteout(ino));
-                this_dir.add_entry(name, ino);
+                this_dir.add_entry(OsString::from_vec(name), ino);
             }
         }
 
