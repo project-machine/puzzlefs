@@ -2,7 +2,7 @@
 name = "format"
 version = "0.1.0"
 authors = ["Tycho Andersen <tycho@tycho.pizza>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 compression = { path = "../compression" }
