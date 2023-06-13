@@ -184,11 +184,6 @@ impl<'de> Deserialize<'de> for BlobRef {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct Metadata {
-    pub inodes: Vec<Inode>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
 pub struct DirEnt {
     pub ino: Ino,
     pub name: Vec<u8>,
