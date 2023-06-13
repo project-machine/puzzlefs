@@ -9,7 +9,6 @@ edition = "2021"
 [dependencies]
 format = { path = "../format" }
 compression = { path = "../compression" }
-# Use https://crates.io/crates/fs-verity when https://github.com/rvolgers/fs-verity-rs/pull/2 gets merged
-fs-verity = { git = "https://github.com/ariel-miculas/fs-verity-rs.git" }
+fs-verity = "0.2.0"
 hex = "*"
-sha2 = "*"
+sha2 = "0.10.6"
