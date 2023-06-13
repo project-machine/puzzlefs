@@ -124,17 +124,18 @@ pub(crate) fn file_read(
             continue;
         }
 
-        // ok, need to read this chunk; how much?
-        let left_in_buf = data.len() - buf_offset;
-        let to_read = min(left_in_buf, chunk.len as usize);
-
-        let start = buf_offset;
-        let finish = start + to_read;
         let addl_offset = if offset > file_offset {
             offset - file_offset
         } else {
             0
         };
+
+        // ok, need to read this chunk; how much?
+        let left_in_buf = data.len() - buf_offset;
+        let to_read = min(left_in_buf, chunk.len as usize - addl_offset);
+
+        let start = buf_offset;
+        let finish = start + to_read;
         file_offset += addl_offset;
 
         // how many did we actually read?
