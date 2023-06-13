@@ -18,6 +18,6 @@ os_pipe = "1.1.2"
 [dev-dependencies]
 builder = { path = "../builder" }
 tempfile = "*"
-sha2 = "*"
+sha2 = "0.10.6"
 hex = "*"
 xattr = "*"
