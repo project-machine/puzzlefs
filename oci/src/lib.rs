@@ -1,5 +1,3 @@
-extern crate hex;
-
 use fsverity_helpers::check_fs_verity;
 use std::any::Any;
 use std::backtrace::Backtrace;

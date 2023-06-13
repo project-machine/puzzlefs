@@ -1,9 +1,6 @@
-extern crate serde_cbor;
-extern crate xattr;
-use std::collections::BTreeMap;
-
 use memmap2::{Mmap, MmapOptions};
 use std::backtrace::Backtrace;
+use std::collections::BTreeMap;
 use std::convert::{TryFrom, TryInto};
 use std::ffi::OsString;
 use std::fmt;
@@ -712,7 +709,7 @@ impl Digest {
 }
 
 impl fmt::Display for Digest {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", hex::encode(self.0))
     }
 }

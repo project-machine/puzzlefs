@@ -15,7 +15,7 @@ check:
 .PHONY: lint
 lint: $(SRC)
 	rustfmt --check $(SRC)
-	cargo clippy --all-targets --all-features -- -D warnings -A clippy::upper-case-acronyms
+	cargo clippy --all-targets --all-features -- -D warnings -D rust-2018-idioms -D rust-2021-compatibility -A clippy::upper-case-acronyms
 
 .PHONY: fmt
 fmt:

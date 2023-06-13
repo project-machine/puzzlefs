@@ -1,7 +1,4 @@
 use std::ffi::OsStr;
-
-extern crate dir_diff;
-
 use tempfile::tempdir;
 
 // see https://github.com/rust-lang/rust/issues/46379#issuecomment-548787629
