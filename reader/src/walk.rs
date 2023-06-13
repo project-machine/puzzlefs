@@ -72,8 +72,6 @@ impl DirEntry {
 
 #[cfg(test)]
 mod tests {
-    extern crate xattr;
-
     use tempfile::{tempdir, TempDir};
 
     use std::fs;

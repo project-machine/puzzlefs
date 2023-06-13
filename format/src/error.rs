@@ -1,6 +1,3 @@
-extern crate serde_cbor;
-extern crate serde_json;
-
 use std::backtrace::Backtrace;
 use std::io;
 use std::os::raw::c_int;

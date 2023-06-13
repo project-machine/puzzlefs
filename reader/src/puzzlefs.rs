@@ -212,7 +212,7 @@ impl PuzzleFS {
 
     // lookup performs a path-based lookup in this puzzlefs
     pub fn lookup(&mut self, p: &Path) -> Result<Option<Inode>> {
-        let components = p.components().collect::<Vec<Component>>();
+        let components = p.components().collect::<Vec<Component<'_>>>();
         if !matches!(components[0], Component::RootDir) {
             return Err(WireFormatError::from_errno(Errno::EINVAL));
         }

@@ -205,7 +205,7 @@ impl Drop for Fuse {
 impl Filesystem for Fuse {
     fn init(
         &mut self,
-        _req: &Request,
+        _req: &Request<'_>,
         _config: &mut KernelConfig,
     ) -> std::result::Result<(), c_int> {
         if let Some(init_notify) = self.init_notify.take() {
@@ -254,12 +254,12 @@ impl Filesystem for Fuse {
     }
 
     fn destroy(&mut self) {}
-    fn forget(&mut self, _req: &Request, _ino: u64, _nlookup: u64) {}
+    fn forget(&mut self, _req: &Request<'_>, _ino: u64, _nlookup: u64) {}
 
     // puzzlefs is readonly, so we can ignore a bunch of requests
     fn setattr(
         &mut self,
-        _req: &Request,
+        _req: &Request<'_>,
         _ino: u64,
         _mode: Option<u32>,
         _uid: Option<u32>,
@@ -281,7 +281,7 @@ impl Filesystem for Fuse {
 
     fn mknod(
         &mut self,
-        _req: &Request,
+        _req: &Request<'_>,
         _parent: u64,
         _name: &OsStr,
         _mode: u32,
@@ -295,7 +295,7 @@ impl Filesystem for Fuse {
 
     fn mkdir(
         &mut self,
-        _req: &Request,
+        _req: &Request<'_>,
         _parent: u64,
         _name: &OsStr,
         _mode: u32,
@@ -306,19 +306,25 @@ impl Filesystem for Fuse {
         reply.error(Errno::EROFS as i32)
     }
 
-    fn unlink(&mut self, _req: &Request, _parent: u64, _name: &OsStr, reply: fuser::ReplyEmpty) {
+    fn unlink(
+        &mut self,
+        _req: &Request<'_>,
+        _parent: u64,
+        _name: &OsStr,
+        reply: fuser::ReplyEmpty,
+    ) {
         debug!("unlink not supported!");
         reply.error(Errno::EROFS as i32)
     }
 
-    fn rmdir(&mut self, _req: &Request, _parent: u64, _name: &OsStr, reply: fuser::ReplyEmpty) {
+    fn rmdir(&mut self, _req: &Request<'_>, _parent: u64, _name: &OsStr, reply: fuser::ReplyEmpty) {
         debug!("rmdir not supported!");
         reply.error(Errno::EROFS as i32)
     }
 
     fn symlink(
         &mut self,
-        _req: &Request,
+        _req: &Request<'_>,
         _parent: u64,
         _name: &OsStr,
         _link: &Path,
@@ -330,7 +336,7 @@ impl Filesystem for Fuse {
 
     fn rename(
         &mut self,
-        _req: &Request,
+        _req: &Request<'_>,
         _parent: u64,
         _name: &OsStr,
         _newparent: u64,
@@ -344,7 +350,7 @@ impl Filesystem for Fuse {
 
     fn link(
         &mut self,
-        _req: &Request,
+        _req: &Request<'_>,
         _ino: u64,
         _newparent: u64,
         _newname: &OsStr,
@@ -356,7 +362,7 @@ impl Filesystem for Fuse {
 
     fn write(
         &mut self,
-        _req: &Request,
+        _req: &Request<'_>,
         _ino: u64,
         _fh: u64,
         _offset: i64,
@@ -372,7 +378,7 @@ impl Filesystem for Fuse {
 
     fn flush(
         &mut self,
-        _req: &Request,
+        _req: &Request<'_>,
         _ino: u64,
         _fh: u64,
         _lock_owner: u64,
@@ -384,7 +390,7 @@ impl Filesystem for Fuse {
 
     fn fsync(
         &mut self,
-        _req: &Request,
+        _req: &Request<'_>,
         _ino: u64,
         _fh: u64,
         _datasync: bool,
@@ -396,7 +402,7 @@ impl Filesystem for Fuse {
 
     fn fsyncdir(
         &mut self,
-        _req: &Request,
+        _req: &Request<'_>,
         _ino: u64,
         _fh: u64,
         _datasync: bool,
@@ -408,7 +414,7 @@ impl Filesystem for Fuse {
 
     fn setxattr(
         &mut self,
-        _req: &Request,
+        _req: &Request<'_>,
         _ino: u64,
         _name: &OsStr,
         _value: &[u8],
@@ -419,14 +425,20 @@ impl Filesystem for Fuse {
         reply.error(Errno::EROFS as i32)
     }
 
-    fn removexattr(&mut self, _req: &Request, _ino: u64, _name: &OsStr, reply: fuser::ReplyEmpty) {
+    fn removexattr(
+        &mut self,
+        _req: &Request<'_>,
+        _ino: u64,
+        _name: &OsStr,
+        reply: fuser::ReplyEmpty,
+    ) {
         debug!("removexattr not supported!");
         reply.error(Errno::EROFS as i32)
     }
 
     fn create(
         &mut self,
-        _req: &Request,
+        _req: &Request<'_>,
         _parent: u64,
         _name: &OsStr,
         _mode: u32,
@@ -440,7 +452,7 @@ impl Filesystem for Fuse {
 
     fn getlk(
         &mut self,
-        _req: &Request,
+        _req: &Request<'_>,
         _ino: u64,
         _fh: u64,
         _lock_owner: u64,
@@ -456,7 +468,7 @@ impl Filesystem for Fuse {
 
     fn setlk(
         &mut self,
-        _req: &Request,
+        _req: &Request<'_>,
         _ino: u64,
         _fh: u64,
         _lock_owner: u64,
@@ -471,7 +483,7 @@ impl Filesystem for Fuse {
         reply.error(Errno::EROFS as i32)
     }
 
-    fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
+    fn lookup(&mut self, _req: &Request<'_>, parent: u64, name: &OsStr, reply: ReplyEntry) {
         match self._lookup(parent, name) {
             Ok(attr) => {
                 // http://libfuse.github.io/doxygen/structfuse__entry__param.html
@@ -486,7 +498,7 @@ impl Filesystem for Fuse {
         }
     }
 
-    fn getattr(&mut self, _req: &Request, ino: u64, reply: fuser::ReplyAttr) {
+    fn getattr(&mut self, _req: &Request<'_>, ino: u64, reply: fuser::ReplyAttr) {
         match self._getattr(ino) {
             Ok(attr) => {
                 // http://libfuse.github.io/doxygen/structfuse__entry__param.html
@@ -500,7 +512,7 @@ impl Filesystem for Fuse {
         }
     }
 
-    fn readlink(&mut self, _req: &Request, ino: u64, reply: ReplyData) {
+    fn readlink(&mut self, _req: &Request<'_>, ino: u64, reply: ReplyData) {
         match self._readlink(ino) {
             Ok(symlink) => reply.data(symlink.as_bytes()),
             Err(e) => {
@@ -510,13 +522,13 @@ impl Filesystem for Fuse {
         }
     }
 
-    fn open(&mut self, _req: &Request, _ino: u64, flags: i32, reply: ReplyOpen) {
+    fn open(&mut self, _req: &Request<'_>, _ino: u64, flags: i32, reply: ReplyOpen) {
         self._open(flags, reply)
     }
 
     fn read(
         &mut self,
-        _req: &Request,
+        _req: &Request<'_>,
         ino: u64,
         _fh: u64,
         offset: i64,
@@ -538,7 +550,7 @@ impl Filesystem for Fuse {
 
     fn release(
         &mut self,
-        _req: &Request,
+        _req: &Request<'_>,
         _ino: u64,
         _fh: u64,
         _flags: i32,
@@ -550,13 +562,13 @@ impl Filesystem for Fuse {
         reply.ok()
     }
 
-    fn opendir(&mut self, _req: &Request, _ino: u64, flags: i32, reply: ReplyOpen) {
+    fn opendir(&mut self, _req: &Request<'_>, _ino: u64, flags: i32, reply: ReplyOpen) {
         self._open(flags, reply)
     }
 
     fn readdir(
         &mut self,
-        _req: &Request,
+        _req: &Request<'_>,
         ino: u64,
         _fh: u64,
         offset: i64,
@@ -573,7 +585,7 @@ impl Filesystem for Fuse {
 
     fn releasedir(
         &mut self,
-        _req: &Request,
+        _req: &Request<'_>,
         _ino: u64,
         _fh: u64,
         _flags: i32,
@@ -583,7 +595,7 @@ impl Filesystem for Fuse {
         reply.ok()
     }
 
-    fn statfs(&mut self, _req: &Request, _ino: u64, reply: fuser::ReplyStatfs) {
+    fn statfs(&mut self, _req: &Request<'_>, _ino: u64, reply: fuser::ReplyStatfs) {
         reply.statfs(
             0,   // blocks
             0,   // bfree
@@ -598,7 +610,7 @@ impl Filesystem for Fuse {
 
     fn getxattr(
         &mut self,
-        _req: &Request,
+        _req: &Request<'_>,
         ino: u64,
         name: &OsStr,
         size: u32,
@@ -625,7 +637,7 @@ impl Filesystem for Fuse {
         }
     }
 
-    fn listxattr(&mut self, _req: &Request, ino: u64, size: u32, reply: fuser::ReplyXattr) {
+    fn listxattr(&mut self, _req: &Request<'_>, ino: u64, size: u32, reply: fuser::ReplyXattr) {
         match self._listxattr(ino) {
             Ok(xattr) => {
                 let xattr_len: u32 = xattr
@@ -647,13 +659,13 @@ impl Filesystem for Fuse {
         }
     }
 
-    fn access(&mut self, _req: &Request, _ino: u64, _mask: i32, reply: fuser::ReplyEmpty) {
+    fn access(&mut self, _req: &Request<'_>, _ino: u64, _mask: i32, reply: fuser::ReplyEmpty) {
         reply.ok()
     }
 
     fn bmap(
         &mut self,
-        _req: &Request,
+        _req: &Request<'_>,
         _ino: u64,
         _blocksize: u32,
         _idx: u64,
@@ -669,7 +681,7 @@ mod tests {
     use std::io;
     use std::path::Path;
 
-    extern crate hex;
+    use hex;
     use sha2::{Digest, Sha256};
     use tempfile::tempdir;
 

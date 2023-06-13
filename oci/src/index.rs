@@ -5,8 +5,6 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-extern crate serde_json;
-
 use crate::descriptor::Descriptor;
 use format::{Result, WireFormatError};
 
