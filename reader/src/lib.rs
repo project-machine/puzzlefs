@@ -6,7 +6,7 @@ use format::Result;
 use oci::Image;
 
 mod puzzlefs;
-pub use puzzlefs::{Inode, InodeMode, PuzzleFS};
+pub use puzzlefs::PuzzleFS;
 
 pub mod fuse;
 pub use crate::fuse::Fuse;

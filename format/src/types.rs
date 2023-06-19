@@ -1,19 +1,22 @@
+use capnp::{message, serialize};
 use memmap2::{Mmap, MmapOptions};
+use nix::errno::Errno;
+use nix::sys::stat;
 use std::backtrace::Backtrace;
 use std::collections::BTreeMap;
 use std::convert::{TryFrom, TryInto};
+use std::ffi::OsStr;
 use std::ffi::OsString;
 use std::fmt;
 use std::fs;
 use std::io;
 use std::io::Read;
-use std::mem;
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::ffi::OsStringExt;
 use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 use std::path::Path;
 use std::vec::Vec;
 
-use nix::sys::stat;
 use serde::de::Error as SerdeError;
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -21,52 +24,21 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::error::{Result, WireFormatError};
 use hex::FromHexError;
 
-mod cbor_helpers;
-use cbor_helpers::cbor_get_array_size;
-pub use cbor_helpers::cbor_size_of_list_header;
-// To get off the ground here, we just use serde and cbor for most things, except for the fixed
-// size Inode which depends being a fixed size (and cbor won't generate it that way) in the later
-// format.
-
-/*
- *
- * TODO: use these wrappers like the spec says
-
-#[derive(Serialize, Deserialize)]
-enum BlobType {
-    Root,
-    Metadata,
-    File,
+pub mod metadata_capnp {
+    include!(concat!(env!("OUT_DIR"), "/metadata_capnp.rs"));
 }
 
-#[derive(Serialize, Deserialize)]
-struct Blob {
-    kind: BlobType,
+pub mod manifest_capnp {
+    include!(concat!(env!("OUT_DIR"), "/manifest_capnp.rs"));
 }
-*/
 
+pub const DEFAULT_FILE_PERMISSIONS: u16 = 0o644;
 pub const SHA256_BLOCK_SIZE: usize = 32;
+// We use a BTreeMap instead of a HashMap because the BTreeMap is sorted, thus we get a
+// reproducible representation of the serialized metadata
 pub type VerityData = BTreeMap<[u8; SHA256_BLOCK_SIZE], [u8; SHA256_BLOCK_SIZE]>;
 
-fn read_one<'a, T: Deserialize<'a>, R: Read>(r: R) -> Result<T> {
-    // serde complains when we leave extra bytes on the wire, which we often want to do. as a
-    // hack, we create a streaming deserializer for the type we're about to read, and then only
-    // read one value.
-    let mut iter = serde_cbor::Deserializer::from_reader(r).into_iter::<T>();
-    let v = iter.next().transpose()?;
-    v.ok_or_else(|| WireFormatError::ValueMissing(Backtrace::capture()))
-}
-
-fn read_one_from_slice<'a, T: Deserialize<'a>>(bytes: &'a [u8]) -> Result<T> {
-    // serde complains when we leave extra bytes on the wire, which we often want to do. as a
-    // hack, we create a streaming deserializer for the type we're about to read, and then only
-    // read one value.
-    let mut iter = serde_cbor::Deserializer::from_slice(bytes).into_iter::<T>();
-    let v = iter.next().transpose()?;
-    v.ok_or_else(|| WireFormatError::ValueMissing(Backtrace::capture()))
-}
-
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug)]
 pub struct Rootfs {
     pub metadatas: Vec<BlobRef>,
     pub fs_verity_data: VerityData,
@@ -75,160 +47,246 @@ pub struct Rootfs {
 
 impl Rootfs {
     pub fn open<R: Read>(f: R) -> Result<Rootfs> {
-        read_one(f)
+        let message_reader = serialize::read_message(f, ::capnp::message::ReaderOptions::new())?;
+        let rootfs = message_reader.get_root::<crate::manifest_capnp::rootfs::Reader<'_>>()?;
+        Self::from_capnp(rootfs)
+    }
+
+    pub fn from_capnp(reader: crate::manifest_capnp::rootfs::Reader<'_>) -> Result<Self> {
+        let metadatas = reader.get_metadatas()?;
+
+        let metadata_vec = metadatas
+            .iter()
+            .map(BlobRef::from_capnp)
+            .collect::<Result<Vec<BlobRef>>>()?;
+
+        let capnp_verities = reader.get_fs_verity_data()?;
+        let mut fs_verity_data = VerityData::new();
+
+        for capnp_verity in capnp_verities {
+            let digest = capnp_verity.get_digest()?.try_into()?;
+            let verity = capnp_verity.get_verity()?.try_into()?;
+            fs_verity_data.insert(digest, verity);
+        }
+
+        Ok(Rootfs {
+            metadatas: metadata_vec,
+            fs_verity_data,
+            manifest_version: reader.get_manifest_version(),
+        })
+    }
+
+    pub fn to_capnp(&self, builder: &mut crate::manifest_capnp::rootfs::Builder<'_>) -> Result<()> {
+        builder.set_manifest_version(self.manifest_version);
+
+        let metadatas_len = self.metadatas.len().try_into()?;
+        let mut capnp_metadatas = builder.reborrow().init_metadatas(metadatas_len);
+
+        for (i, metadata) in self.metadatas.iter().enumerate() {
+            // we already checked that the length of metadatas fits inside a u32
+            let mut capnp_metadata = capnp_metadatas.reborrow().get(i as u32);
+            metadata.to_capnp(&mut capnp_metadata);
+        }
+
+        let verity_data_len = self.fs_verity_data.len().try_into()?;
+        let mut capnp_verities = builder.reborrow().init_fs_verity_data(verity_data_len);
+
+        for (i, (digest, verity)) in self.fs_verity_data.iter().enumerate() {
+            // we already checked that the length of verity_data fits inside a u32
+            let mut capnp_verity = capnp_verities.reborrow().get(i as u32);
+            capnp_verity.set_digest(digest);
+            capnp_verity.set_verity(verity);
+        }
+
+        Ok(())
     }
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BlobRefKind {
-    Local,
-    Other { digest: [u8; 32] },
-}
-
-const BLOB_REF_SIZE: usize = 1 /* mode */ + 32 /* digest */ + 8 /* offset */;
 
 // TODO: should this be an ociv1 digest and include size and media type?
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BlobRef {
+    pub digest: [u8; SHA256_BLOCK_SIZE],
     pub offset: u64,
-    pub kind: BlobRefKind,
     pub compressed: bool,
 }
 
-const COMPRESSED_BIT: u8 = 1 << 7;
-
 impl BlobRef {
-    fn fixed_length_serialize(&self, state: &mut [u8; BLOB_REF_SIZE]) {
-        state[0..8].copy_from_slice(&self.offset.to_le_bytes());
-        match self.kind {
-            BlobRefKind::Local => state[8] = 0,
-            BlobRefKind::Other { ref digest } => {
-                state[8] = 1;
-                state[9..41].copy_from_slice(digest);
-            }
-        };
-        // reuse state[8] for compression, since it only stores the BlobRefKind enum variant
-        if self.compressed {
-            state[8] |= COMPRESSED_BIT;
-        }
-    }
-
-    fn fixed_length_deserialize<E: SerdeError>(
-        state: &[u8; BLOB_REF_SIZE],
-    ) -> std::result::Result<BlobRef, E> {
-        let offset = u64::from_le_bytes(state[0..8].try_into().unwrap());
-
-        let compressed = (state[8] & COMPRESSED_BIT) != 0;
-        let kind = match state[8] & !COMPRESSED_BIT {
-            0 => BlobRefKind::Local,
-            1 => BlobRefKind::Other {
-                digest: state[9..41].try_into().unwrap(),
-            },
-            _ => {
-                return Err(SerdeError::custom(format!(
-                    "bad blob ref kind {}",
-                    state[0]
-                )))
-            }
-        };
-
+    pub fn from_capnp(reader: crate::metadata_capnp::blob_ref::Reader<'_>) -> Result<Self> {
+        let digest = reader.get_digest()?;
         Ok(BlobRef {
-            offset,
-            kind,
-            compressed,
+            digest: digest.try_into()?,
+            offset: reader.get_offset(),
+            compressed: reader.get_compressed(),
         })
     }
-}
-
-impl Serialize for BlobRef {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut state: [u8; BLOB_REF_SIZE] = [0; BLOB_REF_SIZE];
-        self.fixed_length_serialize(&mut state);
-        serializer.serialize_bytes(&state)
+    pub fn to_capnp(&self, builder: &mut crate::metadata_capnp::blob_ref::Builder<'_>) {
+        builder.set_digest(&self.digest);
+        builder.set_offset(self.offset);
+        builder.set_compressed(self.compressed);
     }
 }
 
-impl<'de> Deserialize<'de> for BlobRef {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<BlobRef, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct BlobRefVisitor;
-
-        impl<'de> Visitor<'de> for BlobRefVisitor {
-            type Value = BlobRef;
-
-            fn expecting(&self, formatter: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-                formatter.write_fmt(format_args!("expected {BLOB_REF_SIZE} bytes for BlobRef"))
-            }
-
-            fn visit_bytes<E>(self, v: &[u8]) -> std::result::Result<BlobRef, E>
-            where
-                E: SerdeError,
-            {
-                let state: [u8; BLOB_REF_SIZE] = v
-                    .try_into()
-                    .map_err(|_| SerdeError::invalid_length(v.len(), &self))?;
-                BlobRef::fixed_length_deserialize(&state)
-            }
-        }
-
-        deserializer.deserialize_bytes(BlobRefVisitor)
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct DirEnt {
     pub ino: Ino,
     pub name: Vec<u8>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct DirList {
     // TODO: flags instead?
     pub look_below: bool,
     pub entries: Vec<DirEnt>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug)]
 pub struct FileChunkList {
     pub chunks: Vec<FileChunk>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct FileChunk {
     pub blob: BlobRef,
     pub len: u64,
 }
 
-const INODE_MODE_SIZE: usize = 1 /* mode */ + mem::size_of::<u64>() * 2 /* major/minor/offset */;
-
-// InodeMode needs to have custom serialization because inodes must be a fixed size.
-#[derive(Debug, PartialEq, Eq)]
-pub enum InodeMode {
-    Unknown,
-    Fifo,
-    Chr { major: u64, minor: u64 },
-    Dir { offset: u64 },
-    Blk { major: u64, minor: u64 },
-    Reg { offset: u64 },
-    Lnk,
-    Sock,
-    Wht,
-}
-
 pub type Ino = u64;
 
-const INODE_SIZE: usize = mem::size_of::<Ino>() + INODE_MODE_SIZE + 2 * mem::size_of::<u32>() /* uid and gid */
-+ mem::size_of::<u16>() /* permissions */ + 1 /* Option<BlobRef> */ + BLOB_REF_SIZE;
+impl FileChunk {
+    pub fn from_capnp(reader: crate::metadata_capnp::file_chunk::Reader<'_>) -> Result<Self> {
+        let len = reader.get_len();
+        let blob = BlobRef::from_capnp(reader.get_blob()?)?;
 
-pub const INODE_WIRE_SIZE: usize = cbor_size_of_list_header(INODE_SIZE) + INODE_SIZE;
+        Ok(FileChunk { blob, len })
+    }
+}
 
-pub const DEFAULT_FILE_PERMISSIONS: u16 = 0o644;
-pub const DEFAULT_DIRECTORY_PERMISSIONS: u16 = 0o755;
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const DEFAULT_DIRECTORY_PERMISSIONS: u16 = 0o755;
+
+    fn blobref_roundtrip(original: BlobRef) {
+        let mut message = ::capnp::message::Builder::new_default();
+        let mut capnp_blob_ref = message.init_root::<metadata_capnp::blob_ref::Builder<'_>>();
+
+        original.to_capnp(&mut capnp_blob_ref);
+
+        let mut buf = Vec::new();
+        ::capnp::serialize::write_message(&mut buf, &message)
+            .expect("capnp::serialize::write_message failed");
+
+        let message_reader = serialize::read_message_from_flat_slice(
+            &mut &buf[..],
+            ::capnp::message::ReaderOptions::new(),
+        )
+        .expect("read_message_from_flat_slice failed");
+        let blobref_reader = message_reader
+            .get_root::<crate::metadata_capnp::blob_ref::Reader<'_>>()
+            .expect("message_reader.get_root failed");
+        let deserialized = BlobRef::from_capnp(blobref_reader).expect("BlobRef::from_capnp failed");
+
+        assert_eq!(original, deserialized);
+    }
+
+    #[test]
+    fn test_blobref_serialization() {
+        let local = BlobRef {
+            offset: 42,
+            digest: [
+                0xb7, 0x2e, 0x68, 0x50, 0x82, 0xd1, 0xdd, 0xfe, 0xb6, 0xcc, 0x31, 0xa5, 0x35, 0x29,
+                0x12, 0xFE, 0x3f, 0x51, 0x14, 0x65, 0xf5, 0x27, 0xa5, 0x1a, 0xb3, 0xff, 0xd3, 0xb8,
+                0xAA, 0x3C, 0x25, 0xDD,
+            ],
+            compressed: true,
+        };
+        blobref_roundtrip(local)
+    }
+
+    #[test]
+    fn test_inode_is_constant_serialized_size() {
+        // TODO: this is the sort of think quickcheck is perfect for...
+        let testcases = vec![
+            Inode {
+                ino: 0,
+                mode: InodeMode::Unknown,
+                uid: 0,
+                gid: 0,
+                permissions: 0,
+                additional: None,
+            },
+            Inode {
+                ino: 0,
+                mode: InodeMode::Lnk,
+                uid: 0,
+                gid: 0,
+                permissions: 0,
+                additional: None,
+            },
+            Inode {
+                ino: 0,
+                mode: InodeMode::File {
+                    chunks: vec![FileChunk {
+                        blob: BlobRef {
+                            digest: [
+                                0x12, 0x44, 0xFE, 0xDD, 0x13, 0x39, 0x88, 0x12, 0x48, 0xA8, 0xF8,
+                                0xE4, 0x22, 0x12, 0x15, 0x16, 0x12, 0x44, 0xFE, 0xDD, 0x31, 0x93,
+                                0x88, 0x21, 0x84, 0x8A, 0xF8, 0x4E, 0x22, 0x12, 0x51, 0x16,
+                            ],
+                            offset: 100,
+                            compressed: true,
+                        },
+                        len: 100,
+                    }],
+                },
+                uid: 0,
+                gid: 0,
+                permissions: DEFAULT_FILE_PERMISSIONS,
+                additional: None,
+            },
+            Inode {
+                ino: 65343,
+                mode: InodeMode::Chr {
+                    major: 64,
+                    minor: 65536,
+                },
+                uid: 10,
+                gid: 10000,
+                permissions: DEFAULT_DIRECTORY_PERMISSIONS,
+                additional: None,
+            },
+            Inode {
+                ino: 0,
+                mode: InodeMode::Lnk,
+                uid: 0,
+                gid: 0,
+                permissions: 0xFFFF,
+                additional: Some(InodeAdditional {
+                    xattrs: vec![Xattr {
+                        key: b"some extended attribute".to_vec(),
+                        val: b"with some value".to_vec(),
+                    }],
+                    symlink_target: Some(b"some/other/path".to_vec()),
+                }),
+            },
+        ];
+
+        for test in testcases {
+            let wire = test.to_wire().unwrap();
+            let message_reader = serialize::read_message_from_flat_slice(
+                &mut &wire[..],
+                ::capnp::message::ReaderOptions::new(),
+            )
+            .expect("read_message_from_flat_slice failed");
+            let inode_reader = message_reader
+                .get_root::<crate::metadata_capnp::inode::Reader<'_>>()
+                .expect("message_reader.get_root failed");
+            let after = Inode::from_capnp(inode_reader).expect("BlobRef::from_capnp failed");
+            assert_eq!(test, after);
+        }
+    }
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Inode {
@@ -237,144 +295,44 @@ pub struct Inode {
     pub uid: u32,
     pub gid: u32,
     pub permissions: u16,
-    pub additional: Option<BlobRef>,
-}
-
-impl Serialize for Inode {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut state: [u8; INODE_SIZE] = [0; INODE_SIZE];
-        state[0..8].copy_from_slice(&self.ino.to_le_bytes());
-
-        // TODO: could do this better with mem::discriminant(), but it is complex :). constants
-        // from dirent.h, and rust doesn't like us mixing those with struct-variant enums anyway...
-        match self.mode {
-            InodeMode::Unknown => state[8] = 0,
-            InodeMode::Fifo => state[8] = 1,
-            InodeMode::Chr { major, minor } => {
-                state[8] = 2;
-                state[9..17].copy_from_slice(&major.to_le_bytes());
-                state[17..25].copy_from_slice(&minor.to_le_bytes());
-            }
-            InodeMode::Dir { offset } => {
-                state[8] = 4;
-                state[9..17].copy_from_slice(&offset.to_le_bytes());
-            }
-            InodeMode::Blk { major, minor } => {
-                state[8] = 6;
-                state[9..17].copy_from_slice(&major.to_le_bytes());
-                state[17..25].copy_from_slice(&minor.to_le_bytes());
-            }
-            InodeMode::Reg { offset } => {
-                state[8] = 8;
-                state[9..17].copy_from_slice(&offset.to_le_bytes());
-            }
-            InodeMode::Lnk => state[8] = 10,
-            InodeMode::Sock => state[8] = 12,
-            InodeMode::Wht => state[8] = 14,
-        }
-
-        state[25..29].copy_from_slice(&self.uid.to_le_bytes());
-        state[29..33].copy_from_slice(&self.gid.to_le_bytes());
-        state[33..35].copy_from_slice(&self.permissions.to_le_bytes());
-        if let Some(additional) = self.additional {
-            state[35] = 1;
-            additional
-                .fixed_length_serialize((&mut state[36..36 + BLOB_REF_SIZE]).try_into().unwrap());
-        } else {
-            state[35] = 0;
-        }
-        serializer.serialize_bytes(&state)
-    }
-}
-
-impl<'de> Deserialize<'de> for Inode {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Inode, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct InodeVisitor;
-
-        impl<'de> Visitor<'de> for InodeVisitor {
-            type Value = Inode;
-
-            fn expecting(&self, formatter: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-                formatter.write_fmt(format_args!("expected {INODE_MODE_SIZE} bytes for Inode"))
-            }
-
-            fn visit_bytes<E>(self, v: &[u8]) -> std::result::Result<Inode, E>
-            where
-                E: SerdeError,
-            {
-                let state: [u8; INODE_SIZE] = v
-                    .try_into()
-                    .map_err(|_| SerdeError::invalid_length(v.len(), &self))?;
-
-                let mode = match state[8] {
-                    0 => InodeMode::Unknown,
-                    1 => InodeMode::Fifo,
-                    2 => {
-                        let major = u64::from_le_bytes(state[9..17].try_into().unwrap());
-                        let minor = u64::from_le_bytes(state[17..25].try_into().unwrap());
-                        InodeMode::Chr { major, minor }
-                    }
-                    4 => {
-                        let offset = u64::from_le_bytes(state[9..17].try_into().unwrap());
-                        InodeMode::Dir { offset }
-                    }
-                    6 => {
-                        let major = u64::from_le_bytes(state[9..17].try_into().unwrap());
-                        let minor = u64::from_le_bytes(state[17..25].try_into().unwrap());
-                        InodeMode::Blk { major, minor }
-                    }
-                    8 => {
-                        let offset = u64::from_le_bytes(state[9..17].try_into().unwrap());
-                        InodeMode::Reg { offset }
-                    }
-                    10 => InodeMode::Lnk,
-                    12 => InodeMode::Sock,
-                    14 => InodeMode::Wht,
-                    _ => {
-                        return Err(SerdeError::custom(format!(
-                            "bad inode mode value {}",
-                            state[8]
-                        )))
-                    }
-                };
-
-                let additional = if state[35] > 0 {
-                    Some(BlobRef::fixed_length_deserialize(
-                        state[36..36 + BLOB_REF_SIZE].try_into().unwrap(),
-                    )?)
-                } else {
-                    None
-                };
-
-                Ok(Inode {
-                    // ugh there must be a nicer way to do this with arrays, which we already have
-                    // from above...
-                    ino: u64::from_le_bytes(state[0..8].try_into().unwrap()),
-                    mode,
-                    uid: u32::from_le_bytes(state[25..29].try_into().unwrap()),
-                    gid: u32::from_le_bytes(state[29..33].try_into().unwrap()),
-                    permissions: u16::from_le_bytes(state[33..35].try_into().unwrap()),
-                    additional,
-                })
-            }
-        }
-
-        deserializer.deserialize_bytes(InodeVisitor)
-    }
+    pub additional: Option<InodeAdditional>,
 }
 
 impl Inode {
+    pub fn from_capnp(reader: crate::metadata_capnp::inode::Reader<'_>) -> Result<Self> {
+        Ok(Inode {
+            ino: reader.get_ino(),
+            mode: InodeMode::from_capnp(reader.get_mode())?,
+            uid: reader.get_uid(),
+            gid: reader.get_gid(),
+            permissions: reader.get_permissions(),
+            additional: InodeAdditional::from_capnp(reader.get_additional()?)?,
+        })
+    }
+
+    pub fn to_capnp(&self, builder: &mut metadata_capnp::inode::Builder<'_>) -> Result<()> {
+        builder.set_ino(self.ino);
+
+        let mut mode_builder = builder.reborrow().init_mode();
+        self.mode.to_capnp(&mut mode_builder)?;
+
+        builder.set_uid(self.uid);
+        builder.set_gid(self.gid);
+        builder.set_permissions(self.permissions);
+
+        if let Some(additional) = &self.additional {
+            let mut additional_builder = builder.reborrow().init_additional();
+            additional.to_capnp(&mut additional_builder)?;
+        }
+
+        Ok(())
+    }
+
     pub fn new_dir(
         ino: Ino,
         md: &fs::Metadata,
-        dir_list: u64,
-        additional: Option<BlobRef>,
+        dir_list: DirList,
+        additional: Option<InodeAdditional>,
     ) -> io::Result<Self> {
         if !md.is_dir() {
             return Err(io::Error::new(
@@ -383,15 +341,15 @@ impl Inode {
             ));
         }
 
-        let mode = InodeMode::Dir { offset: dir_list };
+        let mode = InodeMode::Dir { dir_list };
         Ok(Self::new_inode(ino, md, mode, additional))
     }
 
     pub fn new_file(
         ino: Ino,
         md: &fs::Metadata,
-        chunk_list: u64,
-        additional: Option<BlobRef>,
+        file_chunks: Vec<FileChunk>,
+        additional: Option<InodeAdditional>,
     ) -> io::Result<Self> {
         if !md.is_file() {
             return Err(io::Error::new(
@@ -400,11 +358,17 @@ impl Inode {
             ));
         }
 
-        let mode = InodeMode::Reg { offset: chunk_list };
+        let mode = InodeMode::File {
+            chunks: file_chunks,
+        };
         Ok(Self::new_inode(ino, md, mode, additional))
     }
 
-    pub fn new_other(ino: Ino, md: &fs::Metadata, additional: Option<BlobRef>) -> io::Result<Self> {
+    pub fn new_other(
+        ino: Ino,
+        md: &fs::Metadata,
+        additional: Option<InodeAdditional>,
+    ) -> io::Result<Self> {
         let file_type = md.file_type();
         let mode = if file_type.is_fifo() {
             InodeMode::Fifo
@@ -452,7 +416,7 @@ impl Inode {
         ino: Ino,
         md: &fs::Metadata,
         mode: InodeMode,
-        additional: Option<BlobRef>,
+        additional: Option<InodeAdditional>,
     ) -> Self {
         Inode {
             ino,
@@ -465,121 +429,231 @@ impl Inode {
         }
     }
 
-    #[cfg(test)]
-    fn to_wire(&self) -> io::Result<Vec<u8>> {
-        let mut buf = Vec::<u8>::new();
+    pub fn dir_entries(&self) -> Result<&Vec<DirEnt>> {
+        match &self.mode {
+            InodeMode::Dir { dir_list } => Ok(&dir_list.entries),
+            _ => Err(WireFormatError::from_errno(Errno::ENOTDIR)),
+        }
+    }
 
-        serde_cbor::to_writer(&mut buf, &self)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+    pub fn dir_lookup(&self, name: &[u8]) -> Result<u64> {
+        let entries = self.dir_entries()?;
+        entries
+            .iter()
+            .find(|dir_ent| dir_ent.name == name)
+            .map(|dir_ent| dir_ent.ino)
+            .ok_or_else(|| WireFormatError::from_errno(Errno::ENOENT))
+    }
+
+    pub fn file_len(&self) -> Result<u64> {
+        let chunks = match &self.mode {
+            InodeMode::File { chunks } => chunks,
+            _ => return Err(WireFormatError::from_errno(Errno::ENOTDIR)),
+        };
+        Ok(chunks.iter().map(|c| c.len).sum())
+    }
+
+    pub fn symlink_target(&self) -> Result<&OsStr> {
+        self.additional
+            .as_ref()
+            .and_then(|a| {
+                a.symlink_target
+                    .as_ref()
+                    .map(|x| OsStr::from_bytes(x.as_slice()))
+            })
+            .ok_or_else(|| WireFormatError::from_errno(Errno::ENOENT))
+    }
+
+    #[cfg(test)]
+    fn to_wire(&self) -> Result<Vec<u8>> {
+        let mut message = ::capnp::message::Builder::new_default();
+        let mut capnp_inode = message.init_root::<metadata_capnp::inode::Builder<'_>>();
+
+        self.to_capnp(&mut capnp_inode)?;
+
+        let mut buf = Vec::new();
+        ::capnp::serialize::write_message(&mut buf, &message)?;
         Ok(buf)
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+#[derive(Debug, PartialEq, Eq)]
+pub enum InodeMode {
+    Unknown,
+    Fifo,
+    Chr { major: u64, minor: u64 },
+    Dir { dir_list: DirList },
+    Blk { major: u64, minor: u64 },
+    File { chunks: Vec<FileChunk> },
+    Lnk,
+    Sock,
+    Wht,
+}
 
-    #[test]
-    fn test_inode_is_constant_serialized_size() {
-        // TODO: this is the sort of think quickcheck is perfect for...
-        let testcases = vec![
-            Inode {
-                ino: 0,
-                mode: InodeMode::Unknown,
-                uid: 0,
-                gid: 0,
-                permissions: 0,
-                additional: None,
-            },
-            Inode {
-                ino: 0,
-                mode: InodeMode::Lnk,
-                uid: 0,
-                gid: 0,
-                permissions: 0,
-                additional: None,
-            },
-            Inode {
-                ino: 0,
-                mode: InodeMode::Reg { offset: 64 },
-                uid: 0,
-                gid: 0,
-                permissions: DEFAULT_FILE_PERMISSIONS,
-                additional: None,
-            },
-            Inode {
-                ino: 65343,
-                mode: InodeMode::Chr {
-                    major: 64,
-                    minor: 65536,
-                },
-                uid: 10,
-                gid: 10000,
-                permissions: DEFAULT_DIRECTORY_PERMISSIONS,
-                additional: None,
-            },
-            Inode {
-                ino: 0,
-                mode: InodeMode::Lnk,
-                uid: 0,
-                gid: 0,
-                permissions: 0xFFFF,
-                additional: Some(BlobRef {
-                    offset: 42,
-                    kind: BlobRefKind::Local,
-                    compressed: false,
-                }),
-            },
-        ];
-
-        for test in testcases {
-            let wire = test.to_wire().unwrap();
-            let after = serde_cbor::from_reader(&*wire).unwrap();
-            assert_eq!(wire.len(), INODE_WIRE_SIZE, "{test:?}");
-            assert_eq!(test, after);
+impl InodeMode {
+    fn from_capnp(reader: crate::metadata_capnp::inode::mode::Reader<'_>) -> Result<Self> {
+        match reader.which() {
+            Ok(crate::metadata_capnp::inode::mode::Unknown(())) => Ok(InodeMode::Unknown),
+            Ok(crate::metadata_capnp::inode::mode::Fifo(())) => Ok(InodeMode::Fifo),
+            Ok(crate::metadata_capnp::inode::mode::Lnk(())) => Ok(InodeMode::Lnk),
+            Ok(crate::metadata_capnp::inode::mode::Sock(())) => Ok(InodeMode::Sock),
+            Ok(crate::metadata_capnp::inode::mode::Wht(())) => Ok(InodeMode::Wht),
+            Ok(crate::metadata_capnp::inode::mode::Chr(reader)) => {
+                let r = reader?;
+                Ok(InodeMode::Chr {
+                    major: r.get_major(),
+                    minor: r.get_minor(),
+                })
+            }
+            Ok(crate::metadata_capnp::inode::mode::Blk(reader)) => {
+                let r = reader?;
+                Ok(InodeMode::Blk {
+                    major: r.get_major(),
+                    minor: r.get_minor(),
+                })
+            }
+            Ok(crate::metadata_capnp::inode::mode::File(reader)) => {
+                let r = reader?;
+                let chunks = r
+                    .get_chunks()?
+                    .iter()
+                    .map(FileChunk::from_capnp)
+                    .collect::<Result<Vec<FileChunk>>>()?;
+                Ok(InodeMode::File { chunks })
+            }
+            Ok(crate::metadata_capnp::inode::mode::Dir(reader)) => {
+                let r = reader?;
+                let entries = r
+                    .get_entries()?
+                    .iter()
+                    .map(|entry| {
+                        let ino = entry.get_ino();
+                        let dir_entry = entry.get_name().map(Vec::from);
+                        match dir_entry {
+                            Ok(d) => Ok(DirEnt { ino, name: d }),
+                            Err(e) => Err(WireFormatError::from(e)),
+                        }
+                    })
+                    .collect::<Result<Vec<DirEnt>>>()?;
+                let look_below = r.get_look_below();
+                Ok(InodeMode::Dir {
+                    dir_list: DirList {
+                        look_below,
+                        entries,
+                    },
+                })
+            }
+            Err(::capnp::NotInSchema(_e)) => {
+                Err(WireFormatError::InvalidSerializedData(Backtrace::capture()))
+            }
         }
     }
 
-    fn blobref_roundtrip(original: BlobRef) {
-        let mut serialized = [0_u8; BLOB_REF_SIZE];
-        original.fixed_length_serialize(&mut serialized);
-        // we lie here and say this is a serde_cbor error, even though it really doesn't matter...
-        let deserialized =
-            BlobRef::fixed_length_deserialize::<serde_cbor::error::Error>(&serialized).unwrap();
-        assert_eq!(original, deserialized);
-    }
+    fn to_capnp(
+        &self,
+        builder: &mut crate::metadata_capnp::inode::mode::Builder<'_>,
+    ) -> Result<()> {
+        match &self {
+            Self::Unknown => builder.set_unknown(()),
+            Self::Fifo => builder.set_fifo(()),
+            Self::Chr { major, minor } => {
+                let mut chr_builder = builder.reborrow().init_chr();
+                chr_builder.set_minor(*minor);
+                chr_builder.set_major(*major);
+            }
+            Self::Dir { dir_list } => {
+                let mut dir_builder = builder.reborrow().init_dir();
+                dir_builder.set_look_below(dir_list.look_below);
+                let entries_len = dir_list.entries.len().try_into()?;
+                let mut entries_builder = dir_builder.reborrow().init_entries(entries_len);
 
-    #[test]
-    fn test_local_blobref_serialization() {
-        let local = BlobRef {
-            offset: 42,
-            kind: BlobRefKind::Local,
-            compressed: true,
-        };
-        blobref_roundtrip(local)
-    }
+                for (i, entry) in dir_list.entries.iter().enumerate() {
+                    // we already checked that the length of entries fits inside a u32
+                    let mut dir_entry_builder = entries_builder.reborrow().get(i as u32);
+                    dir_entry_builder.set_ino(entry.ino);
+                    dir_entry_builder.set_name(&entry.name);
+                }
+            }
+            Self::Blk { major, minor } => {
+                let mut blk_builder = builder.reborrow().init_blk();
+                blk_builder.set_minor(*minor);
+                blk_builder.set_major(*major);
+            }
+            Self::File { chunks } => {
+                let file_builder = builder.reborrow().init_file();
+                let chunks_len = chunks.len().try_into()?;
+                let mut chunks_builder = file_builder.init_chunks(chunks_len);
 
-    #[test]
-    fn test_other_blobref_serialization() {
-        let mut digest = [0_u8; 32];
-        digest[0] = 0;
-        digest[31] = 31;
-        let other = BlobRef {
-            offset: 42,
-            kind: BlobRefKind::Other { digest },
-            compressed: true,
-        };
-        blobref_roundtrip(other)
+                for (i, chunk) in chunks.iter().enumerate() {
+                    // we already checked that the length of chunks fits inside a u32
+                    let mut chunk_builder = chunks_builder.reborrow().get(i as u32);
+                    chunk_builder.set_len(chunk.len);
+                    let mut blob_ref_builder = chunk_builder.init_blob();
+                    chunk.blob.to_capnp(&mut blob_ref_builder);
+                }
+            }
+            Self::Lnk => builder.set_lnk(()),
+            Self::Sock => builder.set_sock(()),
+            Self::Wht => builder.set_wht(()),
+        }
+        Ok(())
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct InodeAdditional {
     pub xattrs: Vec<Xattr>,
     pub symlink_target: Option<Vec<u8>>,
 }
 
 impl InodeAdditional {
+    pub fn from_capnp(
+        reader: crate::metadata_capnp::inode_additional::Reader<'_>,
+    ) -> Result<Option<Self>> {
+        if !(reader.has_xattrs() || reader.has_symlink_target()) {
+            return Ok(None);
+        }
+
+        let mut xattrs = Vec::new();
+        if reader.has_xattrs() {
+            for capnp_xattr in reader.get_xattrs()? {
+                let xattr = Xattr::from_capnp(capnp_xattr)?;
+                xattrs.push(xattr);
+            }
+        }
+
+        let symlink_target = if reader.has_symlink_target() {
+            Some(reader.get_symlink_target()?.to_vec())
+        } else {
+            None
+        };
+
+        Ok(Some(InodeAdditional {
+            xattrs,
+            symlink_target,
+        }))
+    }
+
+    pub fn to_capnp(
+        &self,
+        builder: &mut crate::metadata_capnp::inode_additional::Builder<'_>,
+    ) -> Result<()> {
+        let xattrs_len = self.xattrs.len().try_into()?;
+        let mut xattrs_builder = builder.reborrow().init_xattrs(xattrs_len);
+
+        for (i, xattr) in self.xattrs.iter().enumerate() {
+            // we already checked that the length of xattrs fits inside a u32
+            let mut xattr_builder = xattrs_builder.reborrow().get(i as u32);
+            xattr.to_capnp(&mut xattr_builder);
+        }
+
+        if let Some(symlink_target) = &self.symlink_target {
+            builder.set_symlink_target(symlink_target);
+        }
+
+        Ok(())
+    }
+
     pub fn new(p: &Path, md: &fs::Metadata) -> io::Result<Option<Self>> {
         let symlink_target = if md.file_type().is_symlink() {
             let t = fs::read_link(p)?;
@@ -611,62 +685,70 @@ impl InodeAdditional {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Xattr {
     pub key: Vec<u8>,
     pub val: Vec<u8>,
 }
 
+impl Xattr {
+    pub fn from_capnp(reader: crate::metadata_capnp::xattr::Reader<'_>) -> Result<Self> {
+        let key = reader.get_key()?.to_vec();
+        let val = reader.get_val()?.to_vec();
+        Ok(Xattr { key, val })
+    }
+
+    pub fn to_capnp(&self, builder: &mut crate::metadata_capnp::xattr::Builder<'_>) {
+        builder.set_val(&self.val);
+        builder.set_key(&self.key);
+    }
+}
+
 pub struct MetadataBlob {
-    mmapped_region: Mmap,
-    inode_count: usize,
+    reader: message::TypedReader<
+        ::capnp::serialize::BufferSegments<Mmap>,
+        crate::metadata_capnp::inode_vector::Owned,
+    >,
 }
 
 impl MetadataBlob {
-    pub fn new(mut f: fs::File) -> Result<MetadataBlob> {
-        let inodes_count = cbor_get_array_size(&mut f)? as usize;
-        Ok(MetadataBlob {
-            mmapped_region: unsafe { MmapOptions::new().map_copy_read_only(&f)? },
-            inode_count: inodes_count,
-        })
+    pub fn new(f: fs::File) -> Result<MetadataBlob> {
+        // We know the loaded message is safe, so we're allowing unlimited reads.
+        let unlimited_reads = message::ReaderOptions {
+            traversal_limit_in_words: None,
+            nesting_limit: 64,
+        };
+        let mmapped_region = unsafe { MmapOptions::new().map_copy_read_only(&f)? };
+        let segments = serialize::BufferSegments::new(mmapped_region, unlimited_reads)?;
+        let reader = message::Reader::new(segments, unlimited_reads).into_typed();
+
+        Ok(MetadataBlob { reader })
     }
 
-    pub fn seek_ref(&mut self, r: &BlobRef) -> Result<u64> {
-        match r.kind {
-            BlobRefKind::Other { .. } => Err(WireFormatError::SeekOtherError(Backtrace::capture())),
-            BlobRefKind::Local => Ok(r.offset),
-        }
+    pub fn get_inode_vector(
+        &self,
+    ) -> ::capnp::Result<::capnp::struct_list::Reader<'_, crate::metadata_capnp::inode::Owned>>
+    {
+        self.reader.get()?.get_inodes()
     }
 
-    pub fn read_file_chunks(&mut self, offset: u64) -> Result<Vec<FileChunk>> {
-        read_one_from_slice::<FileChunkList>(&self.mmapped_region[offset as usize..])
-            .map(|cl| cl.chunks)
-    }
-
-    pub fn read_dir_list(&mut self, offset: u64) -> Result<DirList> {
-        read_one_from_slice(&self.mmapped_region[offset as usize..])
-    }
-
-    pub fn read_inode_additional(&mut self, r: &BlobRef) -> Result<InodeAdditional> {
-        let offset = self.seek_ref(r)? as usize;
-        read_one_from_slice(&self.mmapped_region[offset..])
-    }
-
-    pub fn find_inode(&mut self, ino: Ino) -> Result<Option<Inode>> {
+    pub fn find_inode(
+        &mut self,
+        ino: Ino,
+    ) -> Result<Option<crate::metadata_capnp::inode::Reader<'_>>> {
         let mut left = 0;
-        let mut right = self.inode_count;
+        let inodes = self.get_inode_vector()?;
+        let mut right = inodes.len();
 
         while left <= right {
             let mid = left + (right - left) / 2;
-            let mid_offset = cbor_size_of_list_header(self.inode_count) + mid * INODE_WIRE_SIZE;
-            let i = read_one_from_slice::<Inode>(
-                &self.mmapped_region[mid_offset..mid_offset + INODE_WIRE_SIZE],
-            )?;
-            if i.ino == ino {
+            let i = inodes.get(mid);
+
+            if i.get_ino() == ino {
                 return Ok(Some(i));
             }
 
-            if i.ino < ino {
+            if i.get_ino() < ino {
                 left = mid + 1;
             } else {
                 // don't underflow...
@@ -680,12 +762,10 @@ impl MetadataBlob {
         Ok(None)
     }
 
-    pub fn read_inodes(&mut self) -> Result<Vec<Inode>> {
-        read_one_from_slice(&self.mmapped_region[..])
-    }
-
     pub fn max_ino(&mut self) -> Result<Option<Ino>> {
-        Ok(self.read_inodes()?.last().map(|inode| inode.ino))
+        let inodes = self.get_inode_vector()?;
+        let last_index = inodes.len() - 1;
+        Ok(Some(inodes.get(last_index).get_ino()))
     }
 }
 
@@ -733,20 +813,14 @@ impl TryFrom<&str> for Digest {
 impl TryFrom<BlobRef> for Digest {
     type Error = WireFormatError;
     fn try_from(v: BlobRef) -> std::result::Result<Self, Self::Error> {
-        match v.kind {
-            BlobRefKind::Other { digest } => Ok(Digest(digest)),
-            BlobRefKind::Local => Err(WireFormatError::LocalRefError(Backtrace::capture())),
-        }
+        Ok(Digest(v.digest))
     }
 }
 
 impl TryFrom<&BlobRef> for Digest {
     type Error = WireFormatError;
     fn try_from(v: &BlobRef) -> std::result::Result<Self, Self::Error> {
-        match v.kind {
-            BlobRefKind::Other { digest } => Ok(Digest(digest)),
-            BlobRefKind::Local => Err(WireFormatError::LocalRefError(Backtrace::capture())),
-        }
+        Ok(Digest(v.digest))
     }
 }
 

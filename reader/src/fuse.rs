@@ -22,9 +22,9 @@ use nix::errno::Errno;
 use nix::fcntl::OFlag;
 use std::time::{Duration, SystemTime};
 
-use format::{Result, WireFormatError};
+use format::{DirEnt, Inode, InodeMode, Result, WireFormatError};
 
-use super::puzzlefs::{file_read, Inode, InodeMode, PuzzleFS};
+use super::puzzlefs::{file_read, PuzzleFS};
 
 pub enum PipeDescriptor {
     UnnamedPipe(PipeWriter),
@@ -43,14 +43,12 @@ fn mode_to_fuse_type(inode: &Inode) -> Result<FileType> {
     Ok(match inode.mode {
         InodeMode::File { .. } => FileType::RegularFile,
         InodeMode::Dir { .. } => FileType::Directory,
-        InodeMode::Other => match inode.inode.mode {
-            format::InodeMode::Fifo => FileType::NamedPipe,
-            format::InodeMode::Chr { .. } => FileType::CharDevice,
-            format::InodeMode::Blk { .. } => FileType::BlockDevice,
-            format::InodeMode::Lnk => FileType::Symlink,
-            format::InodeMode::Sock => FileType::Socket,
-            _ => return Err(WireFormatError::from_errno(Errno::EINVAL)),
-        },
+        InodeMode::Fifo { .. } => FileType::NamedPipe,
+        InodeMode::Chr { .. } => FileType::CharDevice,
+        InodeMode::Blk { .. } => FileType::BlockDevice,
+        InodeMode::Lnk { .. } => FileType::Symlink,
+        InodeMode::Sock { .. } => FileType::Socket,
+        _ => return Err(WireFormatError::from_errno(Errno::EINVAL)),
     })
 }
 
@@ -78,7 +76,7 @@ impl Fuse {
         let kind = mode_to_fuse_type(&ic)?;
         let len = ic.file_len().unwrap_or(0);
         Ok(FileAttr {
-            ino: ic.inode.ino,
+            ino: ic.ino,
             size: len,
             blocks: 0,
             atime: SystemTime::UNIX_EPOCH,
@@ -86,10 +84,10 @@ impl Fuse {
             ctime: SystemTime::UNIX_EPOCH,
             crtime: SystemTime::UNIX_EPOCH,
             kind,
-            perm: ic.inode.permissions,
+            perm: ic.permissions,
             nlink: 0,
-            uid: ic.inode.uid,
-            gid: ic.inode.gid,
+            uid: ic.uid,
+            gid: ic.gid,
             rdev: 0,
             blksize: 0,
             flags: 0,
@@ -130,7 +128,8 @@ impl Fuse {
     fn _readdir(&mut self, ino: u64, offset: i64, reply: &mut fuser::ReplyDirectory) -> Result<()> {
         let inode = self.pfs.find_inode(ino)?;
         let entries = inode.dir_entries()?;
-        for (index, (name, ino_r)) in entries.iter().enumerate().skip(offset as usize) {
+        for (index, DirEnt { name, ino: ino_r }) in entries.iter().enumerate().skip(offset as usize)
+        {
             let ino = *ino_r;
             let inode = self.pfs.find_inode(ino)?;
             let kind = mode_to_fuse_type(&inode)?;

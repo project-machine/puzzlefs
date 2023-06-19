@@ -21,8 +21,8 @@ use std::sync::Arc;
 use walkdir::WalkDir;
 
 use format::{
-    BlobRef, BlobRefKind, DirEnt, DirList, FileChunk, FileChunkList, Ino, Inode, InodeAdditional,
-    Result, Rootfs, VerityData, WireFormatError,
+    manifest_capnp, metadata_capnp, BlobRef, DirEnt, DirList, FileChunk, FileChunkList, Ino, Inode,
+    InodeAdditional, InodeMode, Result, Rootfs, VerityData, WireFormatError,
 };
 use oci::media_types;
 use oci::{Descriptor, Image};
@@ -79,6 +79,35 @@ struct Other {
     additional: Option<InodeAdditional>,
 }
 
+fn serialize_manifest(rootfs: Rootfs) -> Result<Vec<u8>> {
+    let mut message = ::capnp::message::Builder::new_default();
+    let mut capnp_rootfs = message.init_root::<manifest_capnp::rootfs::Builder<'_>>();
+
+    rootfs.to_capnp(&mut capnp_rootfs)?;
+
+    let mut buf = Vec::new();
+    ::capnp::serialize::write_message(&mut buf, &message)?;
+    Ok(buf)
+}
+
+fn serialize_metadata(inodes: Vec<Inode>) -> Result<Vec<u8>> {
+    let mut message = ::capnp::message::Builder::new_default();
+    let capnp_inode_vector = message.init_root::<metadata_capnp::inode_vector::Builder<'_>>();
+    let inodes_len = inodes.len().try_into()?;
+
+    let mut capnp_inodes = capnp_inode_vector.init_inodes(inodes_len);
+
+    for (i, inode) in inodes.iter().enumerate() {
+        // we already checked that the length of pfs_inodes fits inside a u32
+        let mut capnp_inode = capnp_inodes.reborrow().get(i as u32);
+        inode.to_capnp(&mut capnp_inode)?;
+    }
+
+    let mut buf = Vec::new();
+    ::capnp::serialize::write_message(&mut buf, &message)?;
+    Ok(buf)
+}
+
 fn process_chunks<C: for<'a> Compression<'a> + Any>(
     oci: &Image,
     mut chunker: StreamCDC,
@@ -101,9 +130,6 @@ fn process_chunks<C: for<'a> Compression<'a> + Any>(
 
         let (desc, fs_verity_digest, compressed) =
             oci.put_blob::<C, media_types::Chunk>(&chunk.data)?;
-        let blob_kind = BlobRefKind::Other {
-            digest: desc.digest.underlying(),
-        };
 
         let verity_hash = fs_verity_digest;
         verity_data.insert(desc.digest.underlying(), verity_hash);
@@ -116,7 +142,7 @@ fn process_chunks<C: for<'a> Compression<'a> + Any>(
 
             let blob = BlobRef {
                 offset: chunk_used,
-                kind: blob_kind,
+                digest: desc.digest.underlying(),
                 compressed,
             };
 
@@ -154,10 +180,6 @@ fn process_chunks<C: for<'a> Compression<'a> + Any>(
     Ok(())
 }
 
-fn inode_encoded_size(num_inodes: usize) -> usize {
-    format::cbor_size_of_list_header(num_inodes) + num_inodes * format::INODE_WIRE_SIZE
-}
-
 fn build_delta<C: for<'a> Compression<'a> + Any>(
     rootfs: &Path,
     oci: &Image,
@@ -178,7 +200,7 @@ fn build_delta<C: for<'a> Compression<'a> + Any>(
         .map(|pfs| pfs.max_inode().map(|i| i + 1))
         .unwrap_or_else(|| Ok(2))?;
 
-    fn lookup_existing(existing: &mut Option<PuzzleFS>, p: &Path) -> Result<Option<reader::Inode>> {
+    fn lookup_existing(existing: &mut Option<PuzzleFS>, p: &Path) -> Result<Option<Inode>> {
         existing
             .as_mut()
             .map(|pfs| pfs.lookup(p))
@@ -218,8 +240,8 @@ fn build_delta<C: for<'a> Compression<'a> + Any>(
         let dir_path = rootfs_relative(d.path());
         let existing_dirents: Vec<_> = lookup_existing(&mut existing, &dir_path)?
             .and_then(|ex| -> Option<Vec<_>> {
-                if let reader::InodeMode::Dir { entries } = ex.mode {
-                    Some(entries)
+                if let InodeMode::Dir { dir_list } = ex.mode {
+                    Some(dir_list.entries)
                 } else {
                     None
                 }
@@ -235,12 +257,13 @@ fn build_delta<C: for<'a> Compression<'a> + Any>(
         let this_dir = dirs
             .get_mut(&this_metadata.ino())
             .ok_or_else(|| WireFormatError::from_errno(Errno::ENOENT))?;
-        for (name, ino) in existing_dirents {
+        for dir_ent in existing_dirents {
             if !(new_dirents).iter().any(|new| {
-                new.path().file_name().unwrap_or_else(|| OsStr::new("")) == OsStr::from_bytes(&name)
+                new.path().file_name().unwrap_or_else(|| OsStr::new(""))
+                    == OsStr::from_bytes(&dir_ent.name)
             }) {
-                pfs_inodes.push(Inode::new_whiteout(ino));
-                this_dir.add_entry(OsString::from_vec(name), ino);
+                pfs_inodes.push(Inode::new_whiteout(dir_ent.ino));
+                this_dir.add_entry(OsString::from_vec(dir_ent.name), dir_ent.ino);
             }
         }
 
@@ -256,7 +279,7 @@ fn build_delta<C: for<'a> Compression<'a> + Any>(
                 .transpose()?
                 .flatten();
 
-            let cur_ino = existing_inode.map(|ex| ex.inode.ino).unwrap_or_else(|| {
+            let cur_ino = existing_inode.map(|ex| ex.ino).unwrap_or_else(|| {
                 let next = next_ino;
                 next_ino += 1;
                 next
@@ -349,115 +372,42 @@ fn build_delta<C: for<'a> Compression<'a> + Any>(
     );
     process_chunks::<C>(oci, fcdc, &mut files, verity_data)?;
 
-    // total inode serailized size
-    let num_inodes = pfs_inodes.len() + dirs.len() + files.len() + others.len();
-    let inodes_serial_size = inode_encoded_size(num_inodes);
-
     // TODO: not render this whole thing in memory, stick it all in the same blob, etc.
-    let mut dir_buf = Vec::<u8>::new();
-
-    let mut sorted_dirs = dirs.values_mut().collect::<Vec<_>>();
-    sorted_dirs.sort_by(|a, b| a.ino.cmp(&b.ino));
+    let mut sorted_dirs = dirs.into_values().collect::<Vec<_>>();
 
     // render dirs
     pfs_inodes.extend(
         sorted_dirs
             .drain(..)
-            .map(|d| {
-                let dir_list_offset = inodes_serial_size + dir_buf.len();
-                serde_cbor::to_writer(&mut dir_buf, &d.dir_list)?;
-                let additional_ref = d
-                    .additional
-                    .as_ref()
-                    .map::<Result<BlobRef>, _>(|add| {
-                        let offset = inodes_serial_size + dir_buf.len();
-                        serde_cbor::to_writer(&mut dir_buf, &add)?;
-                        Ok(BlobRef {
-                            offset: offset as u64,
-                            kind: BlobRefKind::Local,
-                            compressed: false,
-                        })
-                    })
-                    .transpose()?;
-                Ok(Inode::new_dir(
-                    d.ino,
-                    &d.md,
-                    dir_list_offset as u64,
-                    additional_ref,
-                )?)
-            })
+            .map(|d| Ok(Inode::new_dir(d.ino, &d.md, d.dir_list, d.additional)?))
             .collect::<Result<Vec<Inode>>>()?,
     );
-
-    let mut files_buf = Vec::<u8>::new();
 
     // render files
     pfs_inodes.extend(
         files
             .drain(..)
             .map(|f| {
-                let chunk_offset = inodes_serial_size + dir_buf.len() + files_buf.len();
-                serde_cbor::to_writer(&mut files_buf, &f.chunk_list)?;
-                let additional_ref = f
-                    .additional
-                    .as_ref()
-                    .map::<Result<BlobRef>, _>(|add| {
-                        let offset = inodes_serial_size + dir_buf.len() + files_buf.len();
-                        serde_cbor::to_writer(&mut files_buf, &add)?;
-                        Ok(BlobRef {
-                            offset: offset as u64,
-                            kind: BlobRefKind::Local,
-                            compressed: false,
-                        })
-                    })
-                    .transpose()?;
                 Ok(Inode::new_file(
                     f.ino,
                     &f.md,
-                    chunk_offset as u64,
-                    additional_ref,
+                    f.chunk_list.chunks,
+                    f.additional,
                 )?)
             })
             .collect::<Result<Vec<Inode>>>()?,
     );
 
-    let mut others_buf = Vec::<u8>::new();
-
     pfs_inodes.extend(
         others
             .drain(..)
-            .map(|o| {
-                let additional_ref = o
-                    .additional
-                    .as_ref()
-                    .map::<Result<BlobRef>, _>(|add| {
-                        let offset =
-                            inodes_serial_size + dir_buf.len() + files_buf.len() + others_buf.len();
-                        serde_cbor::to_writer(&mut others_buf, &add)?;
-                        Ok(BlobRef {
-                            offset: offset as u64,
-                            kind: BlobRefKind::Local,
-                            compressed: false,
-                        })
-                    })
-                    .transpose()?;
-                Ok(Inode::new_other(o.ino, &o.md, additional_ref)?)
-            })
+            .map(|o| Ok(Inode::new_other(o.ino, &o.md, o.additional)?))
             .collect::<Result<Vec<Inode>>>()?,
     );
 
     pfs_inodes.sort_by(|a, b| a.ino.cmp(&b.ino));
 
-    let mut md_buf = Vec::<u8>::with_capacity(
-        inodes_serial_size + dir_buf.len() + files_buf.len() + others_buf.len(),
-    );
-    serde_cbor::to_writer(&mut md_buf, &pfs_inodes)?;
-
-    assert_eq!(md_buf.len(), inodes_serial_size);
-
-    md_buf.append(&mut dir_buf);
-    md_buf.append(&mut files_buf);
-    md_buf.append(&mut others_buf);
+    let md_buf = serialize_metadata(pfs_inodes)?;
 
     let (desc, ..) = oci.put_blob::<compression::Noop, media_types::Inodes>(md_buf.as_slice())?;
     let verity_hash = get_fs_verity_digest(md_buf.as_slice())?;
@@ -474,22 +424,17 @@ pub fn build_initial_rootfs<C: for<'a> Compression<'a> + Any>(
     let desc = build_delta::<C>(rootfs, oci, None, &mut verity_data)?;
     let metadatas = [BlobRef {
         offset: 0,
-        kind: BlobRefKind::Other {
-            digest: desc.digest.underlying(),
-        },
+        digest: desc.digest.underlying(),
         compressed: false,
     }]
     .to_vec();
 
-    let mut rootfs_buf = Vec::new();
-    serde_cbor::to_writer(
-        &mut rootfs_buf,
-        &Rootfs {
-            metadatas,
-            fs_verity_data: verity_data,
-            manifest_version: PUZZLEFS_IMAGE_MANIFEST_VERSION,
-        },
-    )?;
+    let rootfs_buf = serialize_manifest(Rootfs {
+        metadatas,
+        fs_verity_data: verity_data,
+        manifest_version: PUZZLEFS_IMAGE_MANIFEST_VERSION,
+    })?;
+
     Ok(oci
         .put_blob::<compression::Noop, media_types::Rootfs>(rootfs_buf.as_slice())?
         .0)
@@ -515,9 +460,7 @@ pub fn add_rootfs_delta<C: for<'a> Compression<'a> + Any>(
 
     let desc = build_delta::<C>(rootfs_path, &oci, Some(pfs), &mut verity_data)?;
     let br = BlobRef {
-        kind: BlobRefKind::Other {
-            digest: desc.digest.underlying(),
-        },
+        digest: desc.digest.underlying(),
         offset: 0,
         compressed: false,
     };
@@ -527,8 +470,7 @@ pub fn add_rootfs_delta<C: for<'a> Compression<'a> + Any>(
     }
 
     rootfs.fs_verity_data.extend(verity_data);
-    let mut rootfs_buf = Vec::new();
-    serde_cbor::to_writer(&mut rootfs_buf, &rootfs)?;
+    let rootfs_buf = serialize_manifest(rootfs)?;
     Ok((
         oci.put_blob::<compression::Noop, media_types::Rootfs>(rootfs_buf.as_slice())?
             .0,
@@ -591,7 +533,6 @@ pub mod tests {
 
     use tempfile::tempdir;
 
-    use format::{DirList, InodeMode};
     use oci::Digest;
     use reader::WalkPuzzleFS;
     use std::convert::TryFrom;
@@ -601,7 +542,7 @@ pub mod tests {
     type DefaultCompression = compression::Zstd;
 
     #[test]
-    fn test_fs_generation() {
+    fn test_fs_generation() -> anyhow::Result<()> {
         // TODO: verify the hash value here since it's only one thing? problem is as we change the
         // encoding/add stuff to it, the hash will keep changing and we'll have to update the
         // test...
@@ -634,17 +575,18 @@ pub mod tests {
 
         let metadata_digest = rootfs.metadatas[0].try_into().unwrap();
         let mut blob = image.open_metadata_blob(&metadata_digest, None).unwrap();
-        let inodes = blob.read_inodes().unwrap();
+        let mut inodes = Vec::new();
 
         // we can at least deserialize inodes and they look sane
-        assert_eq!(inodes.len(), 2);
-
-        assert_eq!(blob.find_inode(1).unwrap().unwrap(), inodes[0]);
-        assert_eq!(blob.find_inode(2).unwrap().unwrap(), inodes[1]);
+        for i in 0..2 {
+            inodes.push(Inode::from_capnp(
+                blob.find_inode((i + 1).try_into()?)?
+                    .ok_or(WireFormatError::InvalidSerializedData(Backtrace::capture()))?,
+            )?);
+        }
 
         assert_eq!(inodes[0].ino, 1);
-        if let InodeMode::Dir { offset } = inodes[0].mode {
-            let dir_list: DirList = blob.read_dir_list(offset).unwrap();
+        if let InodeMode::Dir { ref dir_list } = inodes[0].mode {
             assert_eq!(dir_list.entries.len(), 1);
             assert_eq!(dir_list.entries[0].ino, 2);
             assert_eq!(dir_list.entries[0].name, b"SekienAkashita.jpg");
@@ -657,13 +599,13 @@ pub mod tests {
         assert_eq!(inodes[1].ino, 2);
         assert_eq!(inodes[1].uid, md.uid());
         assert_eq!(inodes[1].gid, md.gid());
-        if let InodeMode::Reg { offset } = inodes[1].mode {
-            let chunks = blob.read_file_chunks(offset).unwrap();
+        if let InodeMode::File { ref chunks } = inodes[1].mode {
             assert_eq!(chunks.len(), 1);
             assert_eq!(
                 chunks[0].len,
                 decompressor.get_uncompressed_length().unwrap()
             );
+            Ok(())
         } else {
             panic!("bad inode mode: {:?}", inodes[1].mode);
         }
@@ -700,17 +642,17 @@ pub mod tests {
 
         let root = walker.next().unwrap().unwrap();
         assert_eq!(root.path.to_string_lossy(), "/");
-        assert_eq!(root.inode.inode.ino, 1);
+        assert_eq!(root.inode.ino, 1);
         assert_eq!(root.inode.dir_entries().unwrap().len(), 2);
 
         let jpg_file = walker.next().unwrap().unwrap();
         assert_eq!(jpg_file.path.to_string_lossy(), "/SekienAkashita.jpg");
-        assert_eq!(jpg_file.inode.inode.ino, 2);
+        assert_eq!(jpg_file.inode.ino, 2);
         assert_eq!(jpg_file.inode.file_len().unwrap(), 109466);
 
         let foo_dir = walker.next().unwrap().unwrap();
         assert_eq!(foo_dir.path.to_string_lossy(), "/foo");
-        assert_eq!(foo_dir.inode.inode.ino, 3);
+        assert_eq!(foo_dir.inode.ino, 3);
         assert_eq!(foo_dir.inode.dir_entries().unwrap().len(), 0);
 
         assert!(walker.next().is_none());

@@ -1,99 +1,14 @@
+use nix::errno::Errno;
 use std::backtrace::Backtrace;
 use std::cmp::min;
 use std::convert::TryFrom;
-use std::ffi::OsStr;
 use std::io;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path};
 use std::sync::Arc;
 
-use nix::errno::Errno;
-
-use format::{FileChunk, Ino, InodeAdditional, MetadataBlob, Result, VerityData, WireFormatError};
+use format::{DirEnt, Ino, Inode, InodeMode, MetadataBlob, Result, VerityData, WireFormatError};
 use oci::{Digest, Image};
-
-#[derive(Debug)]
-pub struct Inode {
-    pub inode: format::Inode,
-    pub mode: InodeMode,
-    pub additional: Option<InodeAdditional>,
-}
-
-impl Inode {
-    fn new(layer: &mut MetadataBlob, inode: format::Inode) -> Result<Inode> {
-        let mode = match inode.mode {
-            format::InodeMode::Reg { offset } => {
-                let chunks = layer.read_file_chunks(offset)?;
-                InodeMode::File { chunks }
-            }
-            format::InodeMode::Dir { offset } => {
-                let mut entries = layer
-                    .read_dir_list(offset)?
-                    .entries
-                    .iter_mut()
-                    .map(|de| (de.name.clone(), de.ino))
-                    .collect::<Vec<(Vec<u8>, Ino)>>();
-                entries.sort_by(|(a, _), (b, _)| a.cmp(b));
-                InodeMode::Dir { entries }
-            }
-            _ => InodeMode::Other,
-        };
-
-        let additional = inode
-            .additional
-            .map(|additional_ref| layer.read_inode_additional(&additional_ref))
-            .transpose()?;
-
-        Ok(Inode {
-            inode,
-            mode,
-            additional,
-        })
-    }
-
-    pub fn dir_entries(&self) -> Result<&Vec<(Vec<u8>, Ino)>> {
-        match &self.mode {
-            InodeMode::Dir { entries } => Ok(entries),
-            _ => Err(WireFormatError::from_errno(Errno::ENOTDIR)),
-        }
-    }
-
-    pub fn dir_lookup(&self, name: &[u8]) -> Result<u64> {
-        let entries = self.dir_entries()?;
-        entries
-            .iter()
-            .find(|(cur, _)| cur == name)
-            .map(|(_, ino)| ino)
-            .cloned()
-            .ok_or_else(|| WireFormatError::from_errno(Errno::ENOENT))
-    }
-
-    pub fn file_len(&self) -> Result<u64> {
-        let chunks = match &self.mode {
-            InodeMode::File { chunks } => chunks,
-            _ => return Err(WireFormatError::from_errno(Errno::ENOTDIR)),
-        };
-        Ok(chunks.iter().map(|c| c.len).sum())
-    }
-
-    pub fn symlink_target(&self) -> Result<&OsStr> {
-        self.additional
-            .as_ref()
-            .and_then(|a| {
-                a.symlink_target
-                    .as_ref()
-                    .map(|x| OsStr::from_bytes(x.as_slice()))
-            })
-            .ok_or_else(|| WireFormatError::from_errno(Errno::ENOENT))
-    }
-}
-
-#[derive(Debug)]
-pub enum InodeMode {
-    File { chunks: Vec<FileChunk> },
-    Dir { entries: Vec<(Vec<u8>, Ino)> },
-    Other,
-}
 
 pub(crate) fn file_read(
     oci: &Image,
@@ -199,11 +114,12 @@ impl PuzzleFS {
     pub fn find_inode(&mut self, ino: u64) -> Result<Inode> {
         for layer in self.layers.iter_mut() {
             if let Some(inode) = layer.find_inode(ino)? {
-                if let format::InodeMode::Wht = inode.mode {
+                let inode = Inode::from_capnp(inode)?;
+                if let InodeMode::Wht = inode.mode {
                     // TODO: seems like this should really be an Option.
                     return Err(format::WireFormatError::from_errno(Errno::ENOENT));
                 }
-                return Inode::new(layer, inode);
+                return Ok(inode);
             }
         }
 
@@ -223,9 +139,11 @@ impl PuzzleFS {
         for comp in components.into_iter().skip(1) {
             match comp {
                 Component::Normal(p) => {
-                    if let InodeMode::Dir { entries } = cur.mode {
-                        if let Some((_, ino)) =
-                            entries.into_iter().find(|(path, _)| path == p.as_bytes())
+                    if let InodeMode::Dir { dir_list } = cur.mode {
+                        if let Some(DirEnt { ino, name: _ }) = dir_list
+                            .entries
+                            .into_iter()
+                            .find(|dir_entry| dir_entry.name == p.as_bytes())
                         {
                             cur = self.find_inode(ino)?;
                             continue;
@@ -331,12 +249,11 @@ mod tests {
         image.add_tag("test", rootfs_desc).unwrap();
         let mut pfs = PuzzleFS::open(image, "test", None).unwrap();
 
-        assert_eq!(pfs.lookup(Path::new("/")).unwrap().unwrap().inode.ino, 1);
+        assert_eq!(pfs.lookup(Path::new("/")).unwrap().unwrap().ino, 1);
         assert_eq!(
             pfs.lookup(Path::new("/SekienAkashita.jpg"))
                 .unwrap()
                 .unwrap()
-                .inode
                 .ino,
             2
         );

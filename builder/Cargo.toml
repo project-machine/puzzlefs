@@ -12,10 +12,10 @@ reader = { path = "../reader" }
 fsverity_helpers = { path = "../fsverity_helpers" }
 common = { path = "../common" }
 walkdir = "2"
-serde_cbor = "*"
 fastcdc = "3.0.0"
 nix = "*"
 hex = "*"
+capnp = "0.17"
 
 [dev-dependencies]
 tempfile = "*"

@@ -1,13 +1,13 @@
 use std::collections::VecDeque;
 use std::path::PathBuf;
 
-use format::Result;
+use format::{Inode, InodeMode, Result};
 use oci::Image;
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
 use std::sync::Arc;
 
-use super::puzzlefs::{FileReader, Inode, InodeMode, PuzzleFS};
+use super::puzzlefs::{FileReader, PuzzleFS};
 
 /// A in iterator over a PuzzleFS filesystem. This iterates breadth first, since file content is
 /// stored that way in a puzzlefs image so it'll be faster reading actual content if clients want
@@ -32,10 +32,10 @@ impl<'a> WalkPuzzleFS<'a> {
     }
 
     fn add_dir_entries(&mut self, dir: &DirEntry) -> Result<()> {
-        if let InodeMode::Dir { ref entries } = dir.inode.mode {
-            for (name, ino) in entries {
-                let inode = self.pfs.find_inode(*ino)?;
-                let path = dir.path.join(OsStr::from_bytes(name));
+        if let InodeMode::Dir { ref dir_list } = dir.inode.mode {
+            for entry in &dir_list.entries {
+                let inode = self.pfs.find_inode(entry.ino)?;
+                let path = dir.path.join(OsStr::from_bytes(&entry.name));
                 self.q.push_back(DirEntry {
                     oci: Arc::clone(&self.pfs.oci),
                     path,
@@ -95,12 +95,12 @@ mod tests {
 
         let root = walker.next().unwrap().unwrap();
         assert_eq!(root.path.to_string_lossy(), "/");
-        assert_eq!(root.inode.inode.ino, 1);
+        assert_eq!(root.inode.ino, 1);
         assert_eq!(root.inode.dir_entries().unwrap().len(), 1);
 
         let jpg_file = walker.next().unwrap().unwrap();
         assert_eq!(jpg_file.path.to_string_lossy(), "/SekienAkashita.jpg");
-        assert_eq!(jpg_file.inode.inode.ino, 2);
+        assert_eq!(jpg_file.inode.ino, 2);
         assert_eq!(jpg_file.inode.file_len().unwrap(), 109466);
     }
 
@@ -135,7 +135,7 @@ mod tests {
 
         let root = walker.next().unwrap().unwrap();
         assert_eq!(root.path.to_string_lossy(), "/");
-        assert_eq!(root.inode.inode.ino, 1);
+        assert_eq!(root.inode.ino, 1);
         assert_eq!(root.inode.dir_entries().unwrap().len(), 2);
 
         fn check_inode_xattrs(inode: Inode) {

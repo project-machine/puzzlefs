@@ -79,6 +79,7 @@ name = "builder"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "capnp",
  "common",
  "compression",
  "fastcdc",
@@ -90,7 +91,6 @@ dependencies = [
  "oci",
  "reader",
  "serde",
- "serde_cbor",
  "tempfile",
  "walkdir",
 ]
@@ -100,6 +100,21 @@ name = "byteorder"
 version = "1.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "14c189c53d098945499cdfa7ecc63567cf3886b3332b312a5b4585d8d3a6a610"
+
+[[package]]
+name = "capnp"
+version = "0.17.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "95e65021d89250bbfe7c2791789ced2c4bdc21b0e8bb59c64f3fd6145a5fd678"
+
+[[package]]
+name = "capnpc"
+version = "0.17.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93a9ad66f56468a890565d818ec4ab1300c1f6c62adbbc3295392f61d8f7dbd7"
+dependencies = [
+ "capnp",
+]
 
 [[package]]
 name = "cc"
@@ -293,12 +308,13 @@ dependencies = [
 name = "format"
 version = "0.1.0"
 dependencies = [
+ "capnp",
+ "capnpc",
  "compression",
  "hex",
  "memmap2",
  "nix",
  "serde",
- "serde_cbor",
  "serde_json",
  "thiserror",
  "xattr",
@@ -363,12 +379,6 @@ dependencies = [
  "libc",
  "wasi",
 ]
-
-[[package]]
-name = "half"
-version = "1.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "62aca2aba2d62b4a7f5b33f3712cb1b0692779a56fb510499d5c0aa594daeaf3"
 
 [[package]]
 name = "hashbrown"
@@ -895,16 +905,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d193d69bae983fc11a79df82342761dfbf28a99fc8d203dca4c3c1b590948965"
 dependencies = [
  "serde_derive",
-]
-
-[[package]]
-name = "serde_cbor"
-version = "0.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e18acfa2f90e8b735b2836ab8d538de304cbb6729a7360729ea5a895d15a622"
-dependencies = [
- "half",
- "serde",
 ]
 
 [[package]]
