@@ -13,6 +13,8 @@ pub enum WireFormatError {
     SeekOtherError(Backtrace),
     #[error("no value present")]
     ValueMissing(Backtrace),
+    #[error("invalid serialized data")]
+    InvalidSerializedData(Backtrace),
     #[error("invalid image schema: {0}")]
     InvalidImageSchema(i32, Backtrace),
     #[error("invalid image version: {0}")]
@@ -21,10 +23,14 @@ pub enum WireFormatError {
     InvalidFsVerityData(String, Backtrace),
     #[error("fs error: {0}")]
     IOError(#[from] io::Error, Backtrace),
-    #[error("deserialization error (cbor): {0}")]
-    CBORError(#[from] serde_cbor::Error, Backtrace),
+    #[error("deserialization error (capnp): {0}")]
+    CapnpError(#[from] capnp::Error, Backtrace),
+    #[error("numeric conversion error: {0}")]
+    FromIntError(#[from] std::num::TryFromIntError, Backtrace),
     #[error("deserialization error (json): {0}")]
     JSONError(#[from] serde_json::Error, Backtrace),
+    #[error("TryFromSlice error: {0}")]
+    FromSliceError(#[from] std::array::TryFromSliceError, Backtrace),
     #[error("hex error: {0}")]
     HexError(#[from] hex::FromHexError, Backtrace),
 }
@@ -35,15 +41,18 @@ impl WireFormatError {
             WireFormatError::LocalRefError(..) => Errno::EINVAL as c_int,
             WireFormatError::SeekOtherError(..) => Errno::ESPIPE as c_int,
             WireFormatError::ValueMissing(..) => Errno::ENOENT as c_int,
+            WireFormatError::InvalidSerializedData(..) => Errno::EINVAL as c_int,
             WireFormatError::InvalidImageSchema(..) => Errno::EINVAL as c_int,
             WireFormatError::InvalidImageVersion(..) => Errno::EINVAL as c_int,
             WireFormatError::InvalidFsVerityData(..) => Errno::EINVAL as c_int,
             WireFormatError::IOError(ioe, ..) => {
                 ioe.raw_os_error().unwrap_or(Errno::EINVAL as i32) as c_int
             }
-            WireFormatError::CBORError(..) => Errno::EINVAL as c_int,
+            WireFormatError::CapnpError(..) => Errno::EINVAL as c_int,
             WireFormatError::JSONError(..) => Errno::EINVAL as c_int,
             WireFormatError::HexError(..) => Errno::EINVAL as c_int,
+            WireFormatError::FromIntError(..) => Errno::EINVAL as c_int,
+            WireFormatError::FromSliceError(..) => Errno::EINVAL as c_int,
         }
     }
 

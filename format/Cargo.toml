@@ -7,10 +7,13 @@ edition = "2021"
 [dependencies]
 compression = { path = "../compression" }
 serde = { version = "^1.0.27", features = [ "derive" ] }
-serde_cbor = "*"
 serde_json = "*"
 nix = "*"
 xattr = "*"
 thiserror = "*"
 hex = "*"
 memmap2 = "0.5.10"
+capnp = "0.17"
+
+[build-dependencies]
+capnpc = "0.17"

@@ -1,11 +1,12 @@
 #[macro_use]
 extern crate anyhow;
 
+use format::InodeMode;
 use log::info;
 use nix::sys::stat::{makedev, mknod, Mode, SFlag};
 use nix::unistd::{chown, mkfifo, symlinkat, Gid, Uid};
 use oci::Image;
-use reader::{InodeMode, PuzzleFS, WalkPuzzleFS};
+use reader::{PuzzleFS, WalkPuzzleFS};
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs::Permissions;
@@ -82,11 +83,11 @@ pub fn extract_rootfs(oci_dir: &str, tag: &str, extract_dir: &str) -> anyhow::Re
         let path = safe_path(dir, &dir_entry.path)?;
         let mut is_symlink = false;
         info!("extracting {:#?}", path);
-        if let Some(existing_path) = host_to_pfs.get(&dir_entry.inode.inode.ino) {
+        if let Some(existing_path) = host_to_pfs.get(&dir_entry.inode.ino) {
             fs::hard_link(existing_path, &path)?;
             return Ok(());
         }
-        host_to_pfs.insert(dir_entry.inode.inode.ino, path.clone());
+        host_to_pfs.insert(dir_entry.inode.ino, path.clone());
 
         match dir_entry.inode.mode {
             InodeMode::File { .. } => {
@@ -95,33 +96,29 @@ pub fn extract_rootfs(oci_dir: &str, tag: &str, extract_dir: &str) -> anyhow::Re
                 io::copy(&mut reader, &mut f)?;
             }
             InodeMode::Dir { .. } => fs::create_dir_all(&path)?,
-            InodeMode::Other => {
-                match dir_entry.inode.inode.mode {
-                    // TODO: fix all the hard coded modes when we have modes
-                    format::InodeMode::Fifo => {
-                        mkfifo(&path, Mode::S_IRWXU)?;
-                    }
-                    format::InodeMode::Chr { major, minor } => {
-                        mknod(&path, SFlag::S_IFCHR, Mode::S_IRWXU, makedev(major, minor))?;
-                    }
-                    format::InodeMode::Blk { major, minor } => {
-                        mknod(&path, SFlag::S_IFBLK, Mode::S_IRWXU, makedev(major, minor))?;
-                    }
-                    format::InodeMode::Lnk => {
-                        let target = dir_entry.inode.symlink_target()?;
-                        is_symlink = true;
-                        symlinkat(target, None, &path)?;
-                    }
-                    format::InodeMode::Sock => {
-                        todo!();
-                    }
-                    format::InodeMode::Wht => {
-                        todo!();
-                    }
-                    _ => {
-                        bail!("bad inode mode {:#?}", dir_entry.inode.inode.mode)
-                    }
-                }
+            // TODO: fix all the hard coded modes when we have modes
+            InodeMode::Fifo => {
+                mkfifo(&path, Mode::S_IRWXU)?;
+            }
+            InodeMode::Chr { major, minor } => {
+                mknod(&path, SFlag::S_IFCHR, Mode::S_IRWXU, makedev(major, minor))?;
+            }
+            InodeMode::Blk { major, minor } => {
+                mknod(&path, SFlag::S_IFBLK, Mode::S_IRWXU, makedev(major, minor))?;
+            }
+            InodeMode::Lnk => {
+                let target = dir_entry.inode.symlink_target()?;
+                is_symlink = true;
+                symlinkat(target, None, &path)?;
+            }
+            InodeMode::Sock => {
+                todo!();
+            }
+            InodeMode::Wht => {
+                todo!();
+            }
+            _ => {
+                bail!("bad inode mode {:#?}", dir_entry.inode.mode)
             }
         }
         if let Some(x) = dir_entry.inode.additional {
@@ -135,15 +132,15 @@ pub fn extract_rootfs(oci_dir: &str, tag: &str, extract_dir: &str) -> anyhow::Re
         if !is_symlink {
             std::fs::set_permissions(
                 &path,
-                Permissions::from_mode(dir_entry.inode.inode.permissions.into()),
+                Permissions::from_mode(dir_entry.inode.permissions.into()),
             )?;
         }
 
         if runs_privileged() {
             chown(
                 &path,
-                Some(Uid::from_raw(dir_entry.inode.inode.uid)),
-                Some(Gid::from_raw(dir_entry.inode.inode.gid)),
+                Some(Uid::from_raw(dir_entry.inode.uid)),
+                Some(Gid::from_raw(dir_entry.inode.gid)),
             )?;
         }
 
