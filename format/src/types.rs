@@ -735,7 +735,7 @@ impl MetadataBlob {
     pub fn find_inode(&self, ino: Ino) -> Result<Option<crate::metadata_capnp::inode::Reader<'_>>> {
         let mut left = 0;
         let inodes = self.get_inode_vector()?;
-        let mut right = inodes.len();
+        let mut right = inodes.len() - 1;
 
         while left <= right {
             let mid = left + (right - left) / 2;
