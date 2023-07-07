@@ -83,7 +83,6 @@ dependencies = [
  "common",
  "compression",
  "fastcdc",
- "fastrand",
  "format",
  "fsverity_helpers",
  "hex",
@@ -180,7 +179,6 @@ dependencies = [
  "common",
  "tempfile",
  "zstd",
- "zstd-seekable",
 ]
 
 [[package]]
@@ -296,21 +294,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c47726595a8a071d7d8045a837d1179b1964633e256300675aa50c31284a23e2"
 
 [[package]]
-name = "fastrand"
-version = "1.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77b705829d1e87f762c2df6da140b26af5839e1033aa84aa5f56bb688e4e1bdb"
-dependencies = [
- "instant",
-]
-
-[[package]]
 name = "format"
 version = "0.1.0"
 dependencies = [
  "capnp",
  "capnpc",
- "compression",
  "hex",
  "memmap2",
  "nix",
@@ -337,7 +325,6 @@ dependencies = [
 name = "fsverity_helpers"
 version = "0.1.0"
 dependencies = [
- "compression",
  "format",
  "fs-verity",
  "hex",
@@ -435,15 +422,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "instant"
-version = "0.1.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bee0328b1209d157ef001c94dd85b4f8f64139adb0eac2659f4b08382b2f474d"
-dependencies = [
- "cfg-if",
-]
-
-[[package]]
 name = "itoa"
 version = "0.4.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -530,16 +508,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "num_cpus"
-version = "1.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05499f3756671c15885fee9034446956fff3f243d6077b91e5767df161f766b3"
-dependencies = [
- "hermit-abi",
- "libc",
-]
-
-[[package]]
 name = "num_enum"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -577,7 +545,6 @@ dependencies = [
  "format",
  "fsverity_helpers",
  "hex",
- "log",
  "openat",
  "serde",
  "serde_json",
@@ -1054,15 +1021,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "threadpool"
-version = "1.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d050e60b33d41c19108b32cea32164033a9013fe3b46cbd4457559bfbf77afaa"
-dependencies = [
- "num_cpus",
-]
-
-[[package]]
 name = "time"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1312,19 +1270,6 @@ checksum = "7afb4b54b8910cf5447638cb54bf4e8a65cbedd783af98b98c62ffe91f185543"
 dependencies = [
  "libc",
  "zstd-sys",
-]
-
-[[package]]
-name = "zstd-seekable"
-version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e3b99cee88f0309ca765c6aa8c284a00394c35ef8ca012e2409485fc369bf2f"
-dependencies = [
- "cc",
- "libc",
- "pkg-config",
- "thiserror",
- "threadpool",
 ]
 
 [[package]]

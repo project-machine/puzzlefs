@@ -20,5 +20,4 @@ capnp = "0.17"
 [dev-dependencies]
 tempfile = "*"
 serde = "*"
-fastrand = "*"
 anyhow = "*"
