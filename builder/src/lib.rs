@@ -574,7 +574,7 @@ pub mod tests {
             .unwrap();
 
         let metadata_digest = rootfs.metadatas[0].try_into().unwrap();
-        let mut blob = image.open_metadata_blob(&metadata_digest, None).unwrap();
+        let blob = image.open_metadata_blob(&metadata_digest, None).unwrap();
         let mut inodes = Vec::new();
 
         // we can at least deserialize inodes and they look sane

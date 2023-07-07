@@ -111,8 +111,8 @@ impl PuzzleFS {
         })
     }
 
-    pub fn find_inode(&mut self, ino: u64) -> Result<Inode> {
-        for layer in self.layers.iter_mut() {
+    pub fn find_inode(&self, ino: u64) -> Result<Inode> {
+        for layer in self.layers.iter() {
             if let Some(inode) = layer.find_inode(ino)? {
                 let inode = Inode::from_capnp(inode)?;
                 if let InodeMode::Wht = inode.mode {
@@ -127,7 +127,7 @@ impl PuzzleFS {
     }
 
     // lookup performs a path-based lookup in this puzzlefs
-    pub fn lookup(&mut self, p: &Path) -> Result<Option<Inode>> {
+    pub fn lookup(&self, p: &Path) -> Result<Option<Inode>> {
         let components = p.components().collect::<Vec<Component<'_>>>();
         if !matches!(components[0], Component::RootDir) {
             return Err(WireFormatError::from_errno(Errno::EINVAL));
@@ -158,9 +158,9 @@ impl PuzzleFS {
         Ok(Some(cur))
     }
 
-    pub fn max_inode(&mut self) -> Result<Ino> {
+    pub fn max_inode(&self) -> Result<Ino> {
         let mut max: Ino = 1;
-        for layer in self.layers.iter_mut() {
+        for layer in self.layers.iter() {
             if let Some(ino) = layer.max_ino()? {
                 max = std::cmp::max(ino, max)
             }
@@ -226,7 +226,7 @@ mod tests {
         let image = Image::new(oci_dir.path()).unwrap();
         let rootfs_desc = build_test_fs(Path::new("../builder/test/test-1"), &image).unwrap();
         image.add_tag("test", rootfs_desc).unwrap();
-        let mut pfs = PuzzleFS::open(image, "test", None).unwrap();
+        let pfs = PuzzleFS::open(image, "test", None).unwrap();
 
         let inode = pfs.find_inode(2).unwrap();
         let mut reader = FileReader::new(&pfs.oci, &inode).unwrap();
@@ -247,7 +247,7 @@ mod tests {
         let image = Image::new(oci_dir.path()).unwrap();
         let rootfs_desc = build_test_fs(Path::new("../builder/test/test-1"), &image).unwrap();
         image.add_tag("test", rootfs_desc).unwrap();
-        let mut pfs = PuzzleFS::open(image, "test", None).unwrap();
+        let pfs = PuzzleFS::open(image, "test", None).unwrap();
 
         assert_eq!(pfs.lookup(Path::new("/")).unwrap().unwrap().ino, 1);
         assert_eq!(

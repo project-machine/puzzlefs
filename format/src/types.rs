@@ -732,10 +732,7 @@ impl MetadataBlob {
         self.reader.get()?.get_inodes()
     }
 
-    pub fn find_inode(
-        &mut self,
-        ino: Ino,
-    ) -> Result<Option<crate::metadata_capnp::inode::Reader<'_>>> {
+    pub fn find_inode(&self, ino: Ino) -> Result<Option<crate::metadata_capnp::inode::Reader<'_>>> {
         let mut left = 0;
         let inodes = self.get_inode_vector()?;
         let mut right = inodes.len();
@@ -762,7 +759,7 @@ impl MetadataBlob {
         Ok(None)
     }
 
-    pub fn max_ino(&mut self) -> Result<Option<Ino>> {
+    pub fn max_ino(&self) -> Result<Option<Ino>> {
         let inodes = self.get_inode_vector()?;
         let last_index = inodes.len() - 1;
         Ok(Some(inodes.get(last_index).get_ino()))
