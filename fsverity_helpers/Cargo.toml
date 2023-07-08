@@ -8,7 +8,6 @@ edition = "2021"
 
 [dependencies]
 format = { path = "../format" }
-compression = { path = "../compression" }
 fs-verity = "0.2.0"
 hex = "*"
 sha2 = "0.10.6"
