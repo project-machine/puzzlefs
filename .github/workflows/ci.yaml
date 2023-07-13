@@ -17,5 +17,5 @@ jobs:
                 components: clippy, rustfmt
             - name: install dependencies
               run: |
-                sudo apt-get install libfuse-dev libzstd-dev libxxhash-dev skopeo umoci capnproto
+                sudo apt-get install skopeo umoci capnproto
             - run: make lint check
