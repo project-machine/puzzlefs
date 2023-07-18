@@ -116,7 +116,7 @@ fn mount_background(
     options: Option<Vec<String>>,
     manifest_verity: Option<Vec<u8>>,
     mut recv: PipeReader,
-    init_notify: &mut PipeWriter,
+    init_notify: &PipeWriter,
 ) -> anyhow::Result<()> {
     let daemonize = Daemonize::new().exit_action(move || {
         let mut read_buffer = [0];
@@ -250,7 +250,7 @@ fn main() -> anyhow::Result<()> {
                     m.options,
                     manifest_verity,
                     recv,
-                    &mut init_notify,
+                    &init_notify,
                 ) {
                     if let Err(e) = init_notify.write_all(b"f") {
                         error!("puzzlefs will hang because we couldn't write to pipe, {e}");
