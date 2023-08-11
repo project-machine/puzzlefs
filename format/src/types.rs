@@ -515,7 +515,6 @@ impl InodeMode {
             Ok(crate::metadata_capnp::inode::mode::File(reader)) => {
                 let r = reader?;
                 let chunks = r
-                    .get_chunks()?
                     .iter()
                     .map(FileChunk::from_capnp)
                     .collect::<Result<Vec<FileChunk>>>()?;
@@ -580,9 +579,8 @@ impl InodeMode {
                 blk_builder.set_major(*major);
             }
             Self::File { chunks } => {
-                let file_builder = builder.reborrow().init_file();
                 let chunks_len = chunks.len().try_into()?;
-                let mut chunks_builder = file_builder.init_chunks(chunks_len);
+                let mut chunks_builder = builder.reborrow().init_file(chunks_len);
 
                 for (i, chunk) in chunks.iter().enumerate() {
                     // we already checked that the length of chunks fits inside a u32

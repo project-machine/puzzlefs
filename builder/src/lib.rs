@@ -34,7 +34,7 @@ use fastcdc::v2020::StreamCDC;
 mod filesystem;
 use filesystem::FilesystemStream;
 
-const PUZZLEFS_IMAGE_MANIFEST_VERSION: u64 = 1;
+const PUZZLEFS_IMAGE_MANIFEST_VERSION: u64 = 2;
 
 fn walker(rootfs: &Path) -> WalkDir {
     // breadth first search for sharing, don't cross filesystems just to be safe, order by file

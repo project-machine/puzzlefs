@@ -25,10 +25,6 @@ struct FileChunk {
     len@1: UInt64;
 }
 
-struct File {
-    chunks@0: List(FileChunk);
-}
-
 struct BlobRef {
     digest@0: Data;
     offset@1: UInt64;
@@ -53,7 +49,7 @@ struct Inode {
           chr@3: Chr;
           dir@4: Dir;
           blk@5: Blk;
-          file@6: File;
+          file@6: List(FileChunk);
           lnk@7: Void;
           sock@8: Void;
           wht@9: Void;
