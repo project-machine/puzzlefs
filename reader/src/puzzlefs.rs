@@ -10,6 +10,8 @@ use std::sync::Arc;
 use format::{DirEnt, Ino, Inode, InodeMode, MetadataBlob, Result, VerityData, WireFormatError};
 use oci::{Digest, Image};
 
+pub const PUZZLEFS_IMAGE_MANIFEST_VERSION: u64 = 2;
+
 pub(crate) fn file_read(
     oci: &Image,
     inode: &Inode,
@@ -78,6 +80,17 @@ pub struct PuzzleFS {
 impl PuzzleFS {
     pub fn open(oci: Image, tag: &str, manifest_verity: Option<&[u8]>) -> format::Result<PuzzleFS> {
         let rootfs = oci.open_rootfs_blob::<compression::Noop>(tag, manifest_verity)?;
+
+        if rootfs.manifest_version != PUZZLEFS_IMAGE_MANIFEST_VERSION {
+            return Err(WireFormatError::InvalidImageVersion(
+                format!(
+                    "got {}, expected {}",
+                    rootfs.manifest_version, PUZZLEFS_IMAGE_MANIFEST_VERSION
+                ),
+                Backtrace::capture(),
+            ));
+        }
+
         let verity_data = if manifest_verity.is_some() {
             Some(rootfs.fs_verity_data)
         } else {

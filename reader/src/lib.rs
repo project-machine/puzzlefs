@@ -7,6 +7,7 @@ use oci::Image;
 
 mod puzzlefs;
 pub use puzzlefs::PuzzleFS;
+pub use puzzlefs::PUZZLEFS_IMAGE_MANIFEST_VERSION;
 
 pub mod fuse;
 pub use crate::fuse::Fuse;

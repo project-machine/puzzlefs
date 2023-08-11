@@ -6,7 +6,6 @@ use fsverity_helpers::{
 };
 use oci::Digest;
 use std::any::Any;
-use std::backtrace::Backtrace;
 use std::cmp::min;
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::{OsStr, OsString};
@@ -26,15 +25,13 @@ use format::{
 };
 use oci::media_types;
 use oci::{Descriptor, Image};
-use reader::PuzzleFS;
+use reader::{PuzzleFS, PUZZLEFS_IMAGE_MANIFEST_VERSION};
 
 use nix::errno::Errno;
 
 use fastcdc::v2020::StreamCDC;
 mod filesystem;
 use filesystem::FilesystemStream;
-
-const PUZZLEFS_IMAGE_MANIFEST_VERSION: u64 = 2;
 
 fn walker(rootfs: &Path) -> WalkDir {
     // breadth first search for sharing, don't cross filesystems just to be safe, order by file
@@ -451,12 +448,6 @@ pub fn add_rootfs_delta<C: for<'a> Compression<'a> + Any>(
     let pfs = PuzzleFS::open(oci, tag, None)?;
     let oci = Arc::clone(&pfs.oci);
     let mut rootfs = oci.open_rootfs_blob::<compression::Noop>(tag, None)?;
-    if rootfs.manifest_version != PUZZLEFS_IMAGE_MANIFEST_VERSION {
-        return Err(WireFormatError::InvalidImageVersion(
-            rootfs.manifest_version.to_string(),
-            Backtrace::capture(),
-        ));
-    }
 
     let desc = build_delta::<C>(rootfs_path, &oci, Some(pfs), &mut verity_data)?;
     let br = BlobRef {
@@ -529,6 +520,7 @@ pub fn build_test_fs(path: &Path, image: &Image) -> Result<Descriptor> {
 pub mod tests {
     use super::*;
 
+    use std::backtrace::Backtrace;
     use std::convert::TryInto;
 
     use tempfile::tempdir;
