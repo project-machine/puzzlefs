@@ -109,30 +109,30 @@ For additional build options, run `puzzlefs build -h`.
 ### Mounting a puzzlefs image
 To mount the above puzlefs image, first we need to create a mountpoint:
 ```
-mkdir /tmp/mounted_image
+mkdir /tmp/mounted-image
 ```
 Then run `puzzlefs mount` with the location of the puzzlefs image, the image tag and the mountpoint:
 ```
-$ cargo run --release -- mount /tmp/puzzlefs-image puzzlefs_example /tmp/mounted_image
+$ cargo run --release -- mount /tmp/puzzlefs-image puzzlefs_example /tmp/mounted-image
 ```
 
 If everything was successful, you will see a `fuse` entry in the output of `mount`:
 ```
 $ mount
 ...
-/dev/fuse on /tmp/mounted_image type fuse (rw,nosuid,nodev,relatime,user_id=1000,group_id=1000)
+/dev/fuse on /tmp/mounted-image type fuse (rw,nosuid,nodev,relatime,user_id=1000,group_id=1000)
 ```
 
 and the following message in the journal:
 ```
 $ journalctl --since "2 min ago" | grep puzzlefs
-Aug 14 10:30:27 archlinux-cisco puzzlefs[55544]: Mounting /tmp/mounted_image
+Aug 14 10:30:27 archlinux-cisco puzzlefs[55544]: Mounting /tmp/mounted-image
 ```
 
 The mountpoint also contains the rootfs:
 ```
-$ tree /tmp/mounted_image
-/tmp/mounted_image
+$ tree /tmp/mounted-image
+/tmp/mounted-image
 ├── algorithms
 │   └── binary-search.txt
 └── lorem_ipsum.txt
@@ -151,7 +151,7 @@ This makes the data and metadata files readonly. Any reads of corrupted data wil
 
 Then run mount with the `--digest` option:
 ```
-$ cargo run --release -- mount --digest 9ac9abc098870c55cc61431dae8635806273d8f61274d34bec062560e79dc2f5 /tmp/puzzlefs-image puzzlefs_example /tmp/mounted_image
+$ cargo run --release -- mount --digest 9ac9abc098870c55cc61431dae8635806273d8f61274d34bec062560e79dc2f5 /tmp/puzzlefs-image puzzlefs_example /tmp/mounted-image
 ```
 PuzzleFS now ensures that each file it opens has fs-verity enabled and that the
 fs-verity measurement matches the fs-verity data stored in the manifest. The
@@ -224,8 +224,8 @@ Jul 13 18:37:30 archlinux-cisco puzzlefs[305462]: mount_background failed: fs er
 ```
 For debugging purposes you can use the [RUST_LOG](https://docs.rs/env_logger/latest/env_logger/) environment variable together with `-f` flag of mount:
 ```
-$ RUST_LOG=DEBUG cargo run --release -- mount -f /tmp/puzzlefs-image puzzlefs_example /tmp/mounted_image
-[2023-07-13T16:08:27Z INFO  fuser::session] Mounting /tmp/mounted_image
+$ RUST_LOG=DEBUG cargo run --release -- mount -f /tmp/puzzlefs-image puzzlefs_example /tmp/mounted-image
+[2023-07-13T16:08:27Z INFO  fuser::session] Mounting /tmp/mounted-image
 [2023-07-13T16:08:27Z DEBUG fuser::mnt::fuse_pure] fusermount:
 [2023-07-13T16:08:27Z DEBUG fuser::mnt::fuse_pure] fusermount:
 [2023-07-13T16:08:27Z DEBUG fuser::request] FUSE(  2) ino 0x0000000000000000 INIT kernel ABI 7.38, capabilities 0x73fffffb, max readahead 131072
@@ -243,18 +243,18 @@ issue](https://github.com/vasi/squashfuse/issues/49#issuecomment-785398828).
 
 The following script shows how to wait until the puzzlefs mountpoint is ready.
 The script assumes there is puzzlefs image available at `/tmp/puzzlefs-image`
-and the directory `/tmp/mounted_image` already exists.
+and the directory `/tmp/mounted-image` already exists.
 ```
 #!/bin/bash
 FIFO=$(mktemp -u)
 mkfifo "$FIFO"
-cargo run --release -- mount -i "$FIFO" -f /tmp/puzzlefs-image puzzlefs_example /tmp/mounted_image&
+cargo run --release -- mount -i "$FIFO" -f /tmp/puzzlefs-image puzzlefs_example /tmp/mounted-image&
 STATUS=$(head -c1 "$FIFO")
 if [ "$STATUS" = "s" ]; then
 	echo "Mountpoint contains:"
-	ls /tmp/mounted_image
+	ls /tmp/mounted-image
 else
-	echo "Mounting puzzlefs on /tmp/mounted_image failed"
+	echo "Mounting puzzlefs on /tmp/mounted-image failed"
 fi
 ```
 
@@ -267,7 +267,7 @@ finishes its execution only after the mountpoint becomes ready.
 ### Umounting a puzzlefs image
 If you have specified the `-f` flag to `mount`, simply press `Ctrl-C`.
 
-Otherwise, run `fusermount -u /tmp/mounted_image`. You will need to have `fuse` package installed.
+Otherwise, run `fusermount -u /tmp/mounted-image`. You will need to have `fuse` package installed.
 
 ### Inspecting a puzzlefs image
 ```
