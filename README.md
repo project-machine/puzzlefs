@@ -71,7 +71,7 @@ autogenerating rust code from the capnproto schema language. This is done at
 build time using the [capnpc crate](https://docs.rs/capnpc/latest/capnpc/).
 
 ### How to build
-Run `make` for the debug build and `make release` for the release build. The
+Run `make` (or `cargo build`) for the debug build and `make release` (`cargo build --release`) for the release build. The
 resulting binaries are in `target/debug/puzzlefs` and
 `target/release/puzzlefs`, respectively.
 
@@ -98,7 +98,7 @@ $ tree /tmp/example-rootfs
 
 Then run:
 ```
-$ target/release/puzzlefs build /tmp/example-rootfs /tmp/puzzlefs-image puzzlefs_example
+$ cargo run --release -- build /tmp/example-rootfs /tmp/puzzlefs-image puzzlefs_example
 puzzlefs image manifest digest: 9ac9abc098870c55cc61431dae8635806273d8f61274d34bec062560e79dc2f5
 ```
 This builds a puzzlefs image with the above root filesystem in `/tmp/puzzlefs-image`, with the tag `puzzlefs_example`.
@@ -109,24 +109,30 @@ For additional build options, run `puzzlefs build -h`.
 ### Mounting a puzzlefs image
 To mount the above puzlefs image, first we need to create a mountpoint:
 ```
-mkdir /tmp/mounted_image
+mkdir /tmp/mounted-image
 ```
 Then run `puzzlefs mount` with the location of the puzzlefs image, the image tag and the mountpoint:
 ```
-$ target/release/puzzlefs mount /tmp/puzzlefs-image puzzlefs_example /tmp/mounted_image
+$ cargo run --release -- mount /tmp/puzzlefs-image puzzlefs_example /tmp/mounted-image
 ```
 
-If everything was successful, you will see a `fuse` entry in the output of `mount`.
+If everything was successful, you will see a `fuse` entry in the output of `mount`:
 ```
 $ mount
 ...
-/dev/fuse on /tmp/mounted_image type fuse (rw,nosuid,nodev,relatime,user_id=1000,group_id=1000)
+/dev/fuse on /tmp/mounted-image type fuse (rw,nosuid,nodev,relatime,user_id=1000,group_id=1000)
 ```
 
-and the mountpoint contains the rootfs:
+and the following message in the journal:
 ```
-$ tree /tmp/mounted_image
-/tmp/mounted_image
+$ journalctl --since "2 min ago" | grep puzzlefs
+Aug 14 10:30:27 archlinux-cisco puzzlefs[55544]: Mounting /tmp/mounted-image
+```
+
+The mountpoint also contains the rootfs:
+```
+$ tree /tmp/mounted-image
+/tmp/mounted-image
 ├── algorithms
 │   └── binary-search.txt
 └── lorem_ipsum.txt
@@ -134,21 +140,92 @@ $ tree /tmp/mounted_image
 2 directories, 2 files
 ```
 
-If you want to enable `fs-verity` checks, run
+For additional mount options, run `cargo run -- mount -h`.
+
+### Mounting with fs-verity enabled
+If you want to mount the filesystem with `fs-verity` authenticity protection, first enable `fs-verity` by running:
 ```
-$ target/release/puzzlefs mount --digest 9ac9abc098870c55cc61431dae8635806273d8f61274d34bec062560e79dc2f5 /tmp/puzzlefs-image puzzlefs_example /tmp/mounted_image
+$ cargo run --release -- enable-fs-verity /tmp/puzzlefs-image puzzlefs_example 9ac9abc098870c55cc61431dae8635806273d8f61274d34bec062560e79dc2f5
+```
+This makes the data and metadata files readonly. Any reads of corrupted data will fail.
+
+Then run mount with the `--digest` option:
+```
+$ cargo run --release -- mount --digest 9ac9abc098870c55cc61431dae8635806273d8f61274d34bec062560e79dc2f5 /tmp/puzzlefs-image puzzlefs_example /tmp/mounted-image
+```
+PuzzleFS now ensures that each file it opens has fs-verity enabled and that the
+fs-verity measurement matches the fs-verity data stored in the manifest. The
+image manifest's fs-verity digest is compared with the digest passed on the
+command line via the `--digest` option.
+
+This only works if `fsverity` is [supported and
+enabled](https://www.kernel.org/doc/html/latest/filesystems/fsverity.html#filesystem-support)
+in the underlying filesystem on which the puzzlefs image resides.  Otherwise
+you might get an error like this when running `enable-fs-verity`:
+```
+Error: fs error: Inappropriate ioctl for device (os error 25)
+
+Caused by:
+    Inappropriate ioctl for device (os error 25)
 ```
 
-This only works if `fsverity` is [supported and enabled](https://www.kernel.org/doc/html/latest/filesystems/fsverity.html#filesystem-support) in the underlying filesystem on which the puzzlefs image resides.
-Otherwise you might get an error like this:
+To check wheter fs-verity is enabled, use `tune2fs`:
+```
+$ mount | grep -w '/'
+/dev/mapper/MyVolGroup-root on / type ext4 (rw,relatime)
+
+$ sudo tune2fs -l /dev/mapper/MyVolGroup-root | grep verity
+Filesystem features:      has_journal ext_attr resize_inode dir_index filetype needs_recovery extent 64bit flex_bg sparse_super large_file huge_file dir_nlink extra_isize metadata_csum verity
+```
+
+To set up an 1MB loop device with an ext4 filesystem which supports `fs-verity`
+and mount it under `/mnt`, run:
+```
+$ mktemp -u
+/tmp/tmp.2CDDHVPLXp
+
+$ touch /tmp/tmp.2CDDHVPLXp
+
+$ dd if=/dev/zero of=/tmp/tmp.2CDDHVPLXp bs=1k count=1024
+1024+0 records in
+1024+0 records out
+1048576 bytes (1.0 MB, 1.0 MiB) copied, 0.00203188 s, 516 MB/s
+
+$ sudo losetup -f --show /tmp/tmp.2CDDHVPLXp
+/dev/loop1
+
+$ sudo mkfs -t ext4 -F -b4096 -O verity /dev/loop1
+mke2fs 1.47.0 (5-Feb-2023)
+
+Filesystem too small for a journal
+Discarding device blocks: done
+Creating filesystem with 256 4k blocks and 128 inodes
+
+Allocating group tables: done
+Writing inode tables: done
+Writing superblocks and filesystem accounting information: done
+
+$ sudo mount /dev/loop1 /mnt
+
+$ sudo chown -R $(id -u):$(id -g) /mnt
+
+$ sudo tune2fs -l /dev/loop1 | grep verity
+Filesystem features:      ext_attr resize_inode dir_index filetype extent 64bit flex_bg metadata_csum_seed sparse_super large_file huge_file dir_nlink extra_isize metadata_csum verity
+```
+
+Now copy the puzzlefs image to `/mnt` and try the verity setup commands again.
+
+### Debugging mount issues
+When mounting a puzzlefs filesystem in the background (i.e. without `-f` flag),
+then errors are logged into the journal, e.g.:
 ```
 $ journalctl --since "2 min ago" | grep puzzlefs
 Jul 13 18:37:30 archlinux-cisco puzzlefs[305462]: mount_background failed: fs error: fs error: Inappropriate ioctl for device (os error 25)
 ```
-For debugging purposes you can use the `RUST_LOG` environment variable together with `-f` flag of mount:
+For debugging purposes you can use the [RUST_LOG](https://docs.rs/env_logger/latest/env_logger/) environment variable together with `-f` flag of mount:
 ```
-$ RUST_LOG=DEBUG target/release/puzzlefs mount -f /tmp/puzzlefs-image puzzlefs_example /tmp/mounted_image
-[2023-07-13T16:08:27Z INFO  fuser::session] Mounting /tmp/mounted_image
+$ RUST_LOG=DEBUG cargo run --release -- mount -f /tmp/puzzlefs-image puzzlefs_example /tmp/mounted-image
+[2023-07-13T16:08:27Z INFO  fuser::session] Mounting /tmp/mounted-image
 [2023-07-13T16:08:27Z DEBUG fuser::mnt::fuse_pure] fusermount:
 [2023-07-13T16:08:27Z DEBUG fuser::mnt::fuse_pure] fusermount:
 [2023-07-13T16:08:27Z DEBUG fuser::request] FUSE(  2) ino 0x0000000000000000 INIT kernel ABI 7.38, capabilities 0x73fffffb, max readahead 131072
@@ -156,12 +233,41 @@ $ RUST_LOG=DEBUG target/release/puzzlefs mount -f /tmp/puzzlefs-image puzzlefs_e
 ...
 ```
 
-For additional mount options, run `puzzlefs mount -h`.
+### Notification when the mountpoint is ready
+#### Foreground mount (`mount -f`)
+A named pipe can be passed to the `mount` command. Reading from this pipe is
+blocking operation, waiting until puzzlefs signals that the mountpoint is
+ready.  If the mount operation is successful, the `s` character is written to
+the pipe, otherwise `f` is written. It is inspired by this [squashfuse
+issue](https://github.com/vasi/squashfuse/issues/49#issuecomment-785398828).
+
+The following script shows how to wait until the puzzlefs mountpoint is ready.
+The script assumes there is puzzlefs image available at `/tmp/puzzlefs-image`
+and the directory `/tmp/mounted-image` already exists.
+```
+#!/bin/bash
+FIFO=$(mktemp -u)
+mkfifo "$FIFO"
+cargo run --release -- mount -i "$FIFO" -f /tmp/puzzlefs-image puzzlefs_example /tmp/mounted-image&
+STATUS=$(head -c1 "$FIFO")
+if [ "$STATUS" = "s" ]; then
+	echo "Mountpoint contains:"
+	ls /tmp/mounted-image
+else
+	echo "Mounting puzzlefs on /tmp/mounted-image failed"
+fi
+```
+
+#### Background mount
+When mounting in the background, puzzlefs uses an anonymous pipe to communicate
+between its original process and the daemon it spawns in order to wait until
+the mountpoint is available. This means that the  `puzzlefs mount` command
+finishes its execution only after the mountpoint becomes ready.
 
 ### Umounting a puzzlefs image
 If you have specified the `-f` flag to `mount`, simply press `Ctrl-C`.
 
-Otherwise, run `fusermount -u /tmp/mounted_image`. You will need to have `fuse` package installed.
+Otherwise, run `fusermount -u /tmp/mounted-image`. You will need to have `fuse` package installed.
 
 ### Inspecting a puzzlefs image
 ```
