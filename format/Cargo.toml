@@ -9,7 +9,7 @@ serde = { version = "^1.0.27", features = [ "derive" ] }
 serde_json = "*"
 nix = "*"
 xattr = "*"
-thiserror = "*"
+thiserror = "1.0.46"
 hex = "*"
 memmap2 = "0.5.10"
 capnp = "0.17"
