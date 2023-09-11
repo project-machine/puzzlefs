@@ -7,7 +7,7 @@ pub mod builder;
 mod common;
 pub mod compression;
 pub mod extractor;
-pub mod format;
+mod format;
 pub mod fsverity_helpers;
 pub mod oci;
 pub mod reader;

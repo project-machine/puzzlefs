@@ -81,7 +81,7 @@ fn serialize_manifest(rootfs: Rootfs) -> Result<Vec<u8>> {
     let mut message = ::capnp::message::Builder::new_default();
     let mut capnp_rootfs = message.init_root::<manifest_capnp::rootfs::Builder<'_>>();
 
-    rootfs.to_capnp(&mut capnp_rootfs)?;
+    rootfs.fill_capnp(&mut capnp_rootfs)?;
 
     let mut buf = Vec::new();
     ::capnp::serialize::write_message(&mut buf, &message)?;
@@ -98,7 +98,7 @@ fn serialize_metadata(inodes: Vec<Inode>) -> Result<Vec<u8>> {
     for (i, inode) in inodes.iter().enumerate() {
         // we already checked that the length of pfs_inodes fits inside a u32
         let mut capnp_inode = capnp_inodes.reborrow().get(i as u32);
-        inode.to_capnp(&mut capnp_inode)?;
+        inode.fill_capnp(&mut capnp_inode)?;
     }
 
     let mut buf = Vec::new();
