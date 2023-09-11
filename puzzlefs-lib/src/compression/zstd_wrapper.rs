@@ -1,11 +1,11 @@
-use common::MAX_CHUNK_SIZE;
+use crate::common::MAX_CHUNK_SIZE;
 use std::cmp::min;
 use std::convert::TryFrom;
 use std::convert::TryInto;
 use std::io;
 use std::io::{Read, Write};
 
-use crate::{Compression, Compressor, Decompressor};
+use crate::compression::{Compression, Compressor, Decompressor};
 
 const COMPRESSION_LEVEL: i32 = 3;
 
@@ -113,7 +113,7 @@ impl<'a> Compression<'a> for Zstd {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tests::{compress_decompress, compression_is_seekable};
+    use crate::compression::tests::{compress_decompress, compression_is_seekable};
 
     #[test]
     fn test_ztsd_roundtrip() -> anyhow::Result<()> {

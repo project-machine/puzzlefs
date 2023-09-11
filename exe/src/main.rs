@@ -1,15 +1,16 @@
-use builder::{add_rootfs_delta, build_initial_rootfs, enable_fs_verity};
 use clap::{Args, Parser, Subcommand};
-use compression::{Noop, Zstd};
 use daemonize::Daemonize;
 use env_logger::Env;
-use extractor::extract_rootfs;
-use fsverity_helpers::get_fs_verity_digest;
 use log::{error, info, LevelFilter};
-use oci::Image;
 use os_pipe::{PipeReader, PipeWriter};
-use reader::fuse::PipeDescriptor;
-use reader::{mount, spawn_mount};
+use puzzlefs_lib::{
+    builder::{add_rootfs_delta, build_initial_rootfs, enable_fs_verity},
+    compression::{Noop, Zstd},
+    extractor::extract_rootfs,
+    fsverity_helpers::get_fs_verity_digest,
+    oci::Image,
+    reader::{fuse::PipeDescriptor, mount, spawn_mount},
+};
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::prelude::*;

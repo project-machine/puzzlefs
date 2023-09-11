@@ -75,26 +75,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "builder"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "capnp",
- "common",
- "compression",
- "fastcdc",
- "format",
- "fsverity_helpers",
- "hex",
- "nix",
- "oci",
- "reader",
- "serde",
- "tempfile",
- "walkdir",
-]
-
-[[package]]
 name = "byteorder"
 version = "1.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -165,20 +145,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d4198f73e42b4936b35b5bb248d81d2b595ecb170da0bac7655c54eedfa8da8"
 dependencies = [
  "os_str_bytes",
-]
-
-[[package]]
-name = "common"
-version = "0.1.0"
-
-[[package]]
-name = "compression"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "common",
- "tempfile",
- "zstd",
 ]
 
 [[package]]
@@ -272,41 +238,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "extractor"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "builder",
- "format",
- "log",
- "nix",
- "oci",
- "reader",
- "tempfile",
- "walkdir",
- "xattr",
-]
-
-[[package]]
 name = "fastcdc"
 version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c47726595a8a071d7d8045a837d1179b1964633e256300675aa50c31284a23e2"
-
-[[package]]
-name = "format"
-version = "0.1.0"
-dependencies = [
- "capnp",
- "capnpc",
- "hex",
- "memmap2",
- "nix",
- "serde",
- "serde_json",
- "thiserror",
- "xattr",
-]
 
 [[package]]
 name = "fs-verity"
@@ -318,16 +253,6 @@ dependencies = [
  "libc",
  "num_enum",
  "parse-display",
- "sha2",
-]
-
-[[package]]
-name = "fsverity_helpers"
-version = "0.1.0"
-dependencies = [
- "format",
- "fs-verity",
- "hex",
  "sha2",
 ]
 
@@ -538,21 +463,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "oci"
-version = "0.1.0"
-dependencies = [
- "compression",
- "format",
- "fsverity_helpers",
- "hex",
- "openat",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
-]
-
-[[package]]
 name = "once_cell"
 version = "1.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -712,25 +622,45 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
- "builder",
  "clap",
- "compression",
  "ctrlc",
  "daemonize",
  "dir-diff",
  "env_logger",
- "extractor",
- "format",
- "fsverity_helpers",
  "hex",
  "log",
  "nix",
- "oci",
  "os_pipe",
- "reader",
+ "puzzlefs-lib",
  "syslog",
  "tempfile",
  "walkdir",
+]
+
+[[package]]
+name = "puzzlefs-lib"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "capnp",
+ "capnpc",
+ "fastcdc",
+ "fs-verity",
+ "fuser",
+ "hex",
+ "log",
+ "memmap2",
+ "nix",
+ "openat",
+ "os_pipe",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "walkdir",
+ "xattr",
+ "zstd",
 ]
 
 [[package]]
@@ -780,24 +710,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3190ef7066a446f2e7f42e239d161e905420ccab01eb967c9eb27d21b2322a73"
 dependencies = [
  "rand_core",
-]
-
-[[package]]
-name = "reader"
-version = "0.1.0"
-dependencies = [
- "builder",
- "compression",
- "format",
- "fuser",
- "hex",
- "log",
- "nix",
- "oci",
- "os_pipe",
- "sha2",
- "tempfile",
- "xattr",
 ]
 
 [[package]]
@@ -909,9 +821,9 @@ dependencies = [
 
 [[package]]
 name = "smallvec"
-version = "1.10.0"
+version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a507befe795404456341dfab10cef66ead4c041f62b8b11bbb92bffe5d0953e0"
+checksum = "62bb4feee49fdd9f707ef802e22365a35de4b7b299de4763d44bfea899442ff9"
 
 [[package]]
 name = "strsim"
@@ -1234,9 +1146,9 @@ dependencies = [
 
 [[package]]
 name = "zerocopy"
-version = "0.6.1"
+version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "332f188cc1bcf1fe1064b8c58d150f497e697f49774aa846f2dc949d9a25f236"
+checksum = "20707b61725734c595e840fb3704378a0cd2b9c74cc9e6e20724838fc6a1e2f9"
 dependencies = [
  "byteorder",
  "zerocopy-derive",
@@ -1244,13 +1156,13 @@ dependencies = [
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.3.2"
+version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6505e6815af7de1746a08f69c69606bb45695a17149517680f3b2149713b19a3"
+checksum = "56097d5b91d711293a42be9289403896b68654625021732067eac7a4ca388a1f"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 1.0.103",
+ "syn 2.0.28",
 ]
 
 [[package]]

@@ -21,16 +21,8 @@ use serde::de::Error as SerdeError;
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::error::{Result, WireFormatError};
+use super::error::{Result, WireFormatError};
 use hex::FromHexError;
-
-pub mod metadata_capnp {
-    include!(concat!(env!("OUT_DIR"), "/metadata_capnp.rs"));
-}
-
-pub mod manifest_capnp {
-    include!(concat!(env!("OUT_DIR"), "/manifest_capnp.rs"));
-}
 
 pub const DEFAULT_FILE_PERMISSIONS: u16 = 0o644;
 pub const SHA256_BLOCK_SIZE: usize = 32;
@@ -169,7 +161,8 @@ mod tests {
 
     fn blobref_roundtrip(original: BlobRef) {
         let mut message = ::capnp::message::Builder::new_default();
-        let mut capnp_blob_ref = message.init_root::<metadata_capnp::blob_ref::Builder<'_>>();
+        let mut capnp_blob_ref =
+            message.init_root::<crate::metadata_capnp::blob_ref::Builder<'_>>();
 
         original.to_capnp(&mut capnp_blob_ref);
 
@@ -310,7 +303,7 @@ impl Inode {
         })
     }
 
-    pub fn to_capnp(&self, builder: &mut metadata_capnp::inode::Builder<'_>) -> Result<()> {
+    pub fn to_capnp(&self, builder: &mut crate::metadata_capnp::inode::Builder<'_>) -> Result<()> {
         builder.set_ino(self.ino);
 
         let mut mode_builder = builder.reborrow().init_mode();
@@ -467,7 +460,7 @@ impl Inode {
     #[cfg(test)]
     fn to_wire(&self) -> Result<Vec<u8>> {
         let mut message = ::capnp::message::Builder::new_default();
-        let mut capnp_inode = message.init_root::<metadata_capnp::inode::Builder<'_>>();
+        let mut capnp_inode = message.init_root::<crate::metadata_capnp::inode::Builder<'_>>();
 
         self.to_capnp(&mut capnp_inode)?;
 

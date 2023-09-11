@@ -1,15 +1,8 @@
 [workspace]
 
 members = [
-    "builder",
+    "puzzlefs-lib",
     "exe",
-    "format",
-    "oci",
-    "reader",
-    "compression",
-    "extractor",
-    "fsverity_helpers",
-    "common"
 ]
 
 resolver = "2"

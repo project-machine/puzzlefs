@@ -7,8 +7,11 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path};
 use std::sync::Arc;
 
-use format::{DirEnt, Ino, Inode, InodeMode, MetadataBlob, Result, VerityData, WireFormatError};
-use oci::{Digest, Image};
+use crate::compression::Noop;
+use crate::format::{
+    DirEnt, Ino, Inode, InodeMode, MetadataBlob, Result, VerityData, WireFormatError,
+};
+use crate::oci::{Digest, Image};
 
 pub const PUZZLEFS_IMAGE_MANIFEST_VERSION: u64 = 2;
 
@@ -72,14 +75,14 @@ pub(crate) fn file_read(
 
 pub struct PuzzleFS {
     pub oci: Arc<Image>,
-    layers: Vec<format::MetadataBlob>,
+    layers: Vec<MetadataBlob>,
     pub verity_data: Option<VerityData>,
     pub manifest_verity: Option<Vec<u8>>,
 }
 
 impl PuzzleFS {
-    pub fn open(oci: Image, tag: &str, manifest_verity: Option<&[u8]>) -> format::Result<PuzzleFS> {
-        let rootfs = oci.open_rootfs_blob::<compression::Noop>(tag, manifest_verity)?;
+    pub fn open(oci: Image, tag: &str, manifest_verity: Option<&[u8]>) -> Result<PuzzleFS> {
+        let rootfs = oci.open_rootfs_blob::<Noop>(tag, manifest_verity)?;
 
         if rootfs.manifest_version != PUZZLEFS_IMAGE_MANIFEST_VERSION {
             return Err(WireFormatError::InvalidImageVersion(
@@ -115,7 +118,7 @@ impl PuzzleFS {
                 };
                 oci.open_metadata_blob(&digest, file_verity)
             })
-            .collect::<format::Result<Vec<MetadataBlob>>>()?;
+            .collect::<Result<Vec<MetadataBlob>>>()?;
         Ok(PuzzleFS {
             oci: Arc::new(oci),
             layers,
@@ -130,13 +133,13 @@ impl PuzzleFS {
                 let inode = Inode::from_capnp(inode)?;
                 if let InodeMode::Wht = inode.mode {
                     // TODO: seems like this should really be an Option.
-                    return Err(format::WireFormatError::from_errno(Errno::ENOENT));
+                    return Err(WireFormatError::from_errno(Errno::ENOENT));
                 }
                 return Ok(inode);
             }
         }
 
-        Err(format::WireFormatError::from_errno(Errno::ENOENT))
+        Err(WireFormatError::from_errno(Errno::ENOENT))
     }
 
     // lookup performs a path-based lookup in this puzzlefs
@@ -227,8 +230,8 @@ mod tests {
     use sha2::{Digest, Sha256};
     use tempfile::tempdir;
 
-    use builder::build_test_fs;
-    use oci::Image;
+    use crate::builder::build_test_fs;
+    use crate::oci::Image;
 
     use super::*;
 
@@ -237,7 +240,7 @@ mod tests {
         // make ourselves a test image
         let oci_dir = tempdir().unwrap();
         let image = Image::new(oci_dir.path()).unwrap();
-        let rootfs_desc = build_test_fs(Path::new("../builder/test/test-1"), &image).unwrap();
+        let rootfs_desc = build_test_fs(Path::new("src/builder/test/test-1"), &image).unwrap();
         image.add_tag("test", rootfs_desc).unwrap();
         let pfs = PuzzleFS::open(image, "test", None).unwrap();
 
@@ -258,7 +261,7 @@ mod tests {
     fn test_path_lookup() {
         let oci_dir = tempdir().unwrap();
         let image = Image::new(oci_dir.path()).unwrap();
-        let rootfs_desc = build_test_fs(Path::new("../builder/test/test-1"), &image).unwrap();
+        let rootfs_desc = build_test_fs(Path::new("src/builder/test/test-1"), &image).unwrap();
         image.add_tag("test", rootfs_desc).unwrap();
         let pfs = PuzzleFS::open(image, "test", None).unwrap();
 

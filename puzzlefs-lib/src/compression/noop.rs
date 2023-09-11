@@ -1,4 +1,4 @@
-use crate::{Compression, Compressor, Decompressor};
+use crate::compression::{Compression, Compressor, Decompressor};
 use std::io;
 use std::io::{Read, Seek, Write};
 
@@ -69,7 +69,7 @@ impl<'a> Compression<'a> for Noop {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tests::{compress_decompress, compression_is_seekable, TRUTH};
+    use crate::compression::tests::{compress_decompress, compression_is_seekable, TRUTH};
     use std::fs;
     use tempfile::NamedTempFile;
 

@@ -349,10 +349,12 @@ $ capnp convert binary:json ~/puzzlefs/format/metadata.capnp InodeVector < blobs
 
 ## Implementation
 
-* `format/` is the code for serializing/de-serializing the puzzlefs format
-* `builder/` is the code for building a puzzlefs image
-* `extractor/` is the code for extracting a puzzlefs image
-* `mount/` is the code for fuse mounting a puzzlefs image
+This workspace contains a library and an executable crate:
+* `puzzlefs-lib` is the library crate
+  * `format` is the module for serializing/de-serializing the puzzlefs format
+  * `builder` is the module for building a puzzlefs image
+  * `extractor` is the module for extracting a puzzlefs image
+  * `reader` is the module for fuse mounting a puzzlefs image
 * `exe/` is the executable frontend for the above
 
 ### Contributing

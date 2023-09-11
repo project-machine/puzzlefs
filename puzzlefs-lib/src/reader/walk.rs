@@ -1,8 +1,8 @@
 use std::collections::VecDeque;
 use std::path::PathBuf;
 
-use format::{Inode, InodeMode, Result};
-use oci::Image;
+use crate::format::{Inode, InodeMode, Result};
+use crate::oci::Image;
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
 use std::sync::Arc;
@@ -77,8 +77,8 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
-    use builder::build_test_fs;
-    use oci::Image;
+    use crate::builder::build_test_fs;
+    use crate::oci::Image;
 
     use super::*;
 
@@ -87,7 +87,7 @@ mod tests {
         // make ourselves a test image
         let oci_dir = tempdir().unwrap();
         let image = Image::new(oci_dir.path()).unwrap();
-        let rootfs_desc = build_test_fs(Path::new("../builder/test/test-1"), &image).unwrap();
+        let rootfs_desc = build_test_fs(Path::new("src/builder/test/test-1"), &image).unwrap();
         image.add_tag("test", rootfs_desc).unwrap();
         let mut pfs = PuzzleFS::open(image, "test", None).unwrap();
 
