@@ -22,7 +22,7 @@ use nix::errno::Errno;
 use nix::fcntl::OFlag;
 use std::time::{Duration, SystemTime};
 
-use format::{DirEnt, Inode, InodeMode, Result, WireFormatError};
+use crate::format::{DirEnt, Inode, InodeMode, Result, WireFormatError};
 
 use super::puzzlefs::{file_read, PuzzleFS};
 
@@ -684,17 +684,17 @@ mod tests {
     use sha2::{Digest, Sha256};
     use tempfile::tempdir;
 
-    use builder::build_test_fs;
-    use oci::Image;
+    use crate::builder::build_test_fs;
+    use crate::oci::Image;
 
     #[test]
     fn test_fuse() {
         let dir = tempdir().unwrap();
         let image = Image::new(dir.path()).unwrap();
-        let rootfs_desc = build_test_fs(Path::new("../builder/test/test-1"), &image).unwrap();
+        let rootfs_desc = build_test_fs(Path::new("src/builder/test/test-1"), &image).unwrap();
         image.add_tag("test", rootfs_desc).unwrap();
         let mountpoint = tempdir().unwrap();
-        let _bg = crate::spawn_mount::<&str>(
+        let _bg = crate::reader::spawn_mount::<&str>(
             image,
             "test",
             Path::new(mountpoint.path()),

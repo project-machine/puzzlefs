@@ -21,16 +21,8 @@ use serde::de::Error as SerdeError;
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::error::{Result, WireFormatError};
+use super::error::{Result, WireFormatError};
 use hex::FromHexError;
-
-pub mod metadata_capnp {
-    include!(concat!(env!("OUT_DIR"), "/metadata_capnp.rs"));
-}
-
-pub mod manifest_capnp {
-    include!(concat!(env!("OUT_DIR"), "/manifest_capnp.rs"));
-}
 
 pub const DEFAULT_FILE_PERMISSIONS: u16 = 0o644;
 pub const SHA256_BLOCK_SIZE: usize = 32;
@@ -76,7 +68,10 @@ impl Rootfs {
         })
     }
 
-    pub fn to_capnp(&self, builder: &mut crate::manifest_capnp::rootfs::Builder<'_>) -> Result<()> {
+    pub fn fill_capnp(
+        &self,
+        builder: &mut crate::manifest_capnp::rootfs::Builder<'_>,
+    ) -> Result<()> {
         builder.set_manifest_version(self.manifest_version);
 
         let metadatas_len = self.metadatas.len().try_into()?;
@@ -85,7 +80,7 @@ impl Rootfs {
         for (i, metadata) in self.metadatas.iter().enumerate() {
             // we already checked that the length of metadatas fits inside a u32
             let mut capnp_metadata = capnp_metadatas.reborrow().get(i as u32);
-            metadata.to_capnp(&mut capnp_metadata);
+            metadata.fill_capnp(&mut capnp_metadata);
         }
 
         let verity_data_len = self.fs_verity_data.len().try_into()?;
@@ -119,7 +114,7 @@ impl BlobRef {
             compressed: reader.get_compressed(),
         })
     }
-    pub fn to_capnp(&self, builder: &mut crate::metadata_capnp::blob_ref::Builder<'_>) {
+    pub fn fill_capnp(&self, builder: &mut crate::metadata_capnp::blob_ref::Builder<'_>) {
         builder.set_digest(&self.digest);
         builder.set_offset(self.offset);
         builder.set_compressed(self.compressed);
@@ -169,9 +164,10 @@ mod tests {
 
     fn blobref_roundtrip(original: BlobRef) {
         let mut message = ::capnp::message::Builder::new_default();
-        let mut capnp_blob_ref = message.init_root::<metadata_capnp::blob_ref::Builder<'_>>();
+        let mut capnp_blob_ref =
+            message.init_root::<crate::metadata_capnp::blob_ref::Builder<'_>>();
 
-        original.to_capnp(&mut capnp_blob_ref);
+        original.fill_capnp(&mut capnp_blob_ref);
 
         let mut buf = Vec::new();
         ::capnp::serialize::write_message(&mut buf, &message)
@@ -310,11 +306,14 @@ impl Inode {
         })
     }
 
-    pub fn to_capnp(&self, builder: &mut metadata_capnp::inode::Builder<'_>) -> Result<()> {
+    pub fn fill_capnp(
+        &self,
+        builder: &mut crate::metadata_capnp::inode::Builder<'_>,
+    ) -> Result<()> {
         builder.set_ino(self.ino);
 
         let mut mode_builder = builder.reborrow().init_mode();
-        self.mode.to_capnp(&mut mode_builder)?;
+        self.mode.fill_capnp(&mut mode_builder)?;
 
         builder.set_uid(self.uid);
         builder.set_gid(self.gid);
@@ -322,7 +321,7 @@ impl Inode {
 
         if let Some(additional) = &self.additional {
             let mut additional_builder = builder.reborrow().init_additional();
-            additional.to_capnp(&mut additional_builder)?;
+            additional.fill_capnp(&mut additional_builder)?;
         }
 
         Ok(())
@@ -467,9 +466,9 @@ impl Inode {
     #[cfg(test)]
     fn to_wire(&self) -> Result<Vec<u8>> {
         let mut message = ::capnp::message::Builder::new_default();
-        let mut capnp_inode = message.init_root::<metadata_capnp::inode::Builder<'_>>();
+        let mut capnp_inode = message.init_root::<crate::metadata_capnp::inode::Builder<'_>>();
 
-        self.to_capnp(&mut capnp_inode)?;
+        self.fill_capnp(&mut capnp_inode)?;
 
         let mut buf = Vec::new();
         ::capnp::serialize::write_message(&mut buf, &message)?;
@@ -548,7 +547,7 @@ impl InodeMode {
         }
     }
 
-    fn to_capnp(
+    fn fill_capnp(
         &self,
         builder: &mut crate::metadata_capnp::inode::mode::Builder<'_>,
     ) -> Result<()> {
@@ -587,7 +586,7 @@ impl InodeMode {
                     let mut chunk_builder = chunks_builder.reborrow().get(i as u32);
                     chunk_builder.set_len(chunk.len);
                     let mut blob_ref_builder = chunk_builder.init_blob();
-                    chunk.blob.to_capnp(&mut blob_ref_builder);
+                    chunk.blob.fill_capnp(&mut blob_ref_builder);
                 }
             }
             Self::Lnk => builder.set_lnk(()),
@@ -632,7 +631,7 @@ impl InodeAdditional {
         }))
     }
 
-    pub fn to_capnp(
+    pub fn fill_capnp(
         &self,
         builder: &mut crate::metadata_capnp::inode_additional::Builder<'_>,
     ) -> Result<()> {
@@ -642,7 +641,7 @@ impl InodeAdditional {
         for (i, xattr) in self.xattrs.iter().enumerate() {
             // we already checked that the length of xattrs fits inside a u32
             let mut xattr_builder = xattrs_builder.reborrow().get(i as u32);
-            xattr.to_capnp(&mut xattr_builder);
+            xattr.fill_capnp(&mut xattr_builder);
         }
 
         if let Some(symlink_target) = &self.symlink_target {
@@ -696,7 +695,7 @@ impl Xattr {
         Ok(Xattr { key, val })
     }
 
-    pub fn to_capnp(&self, builder: &mut crate::metadata_capnp::xattr::Builder<'_>) {
+    pub fn fill_capnp(&self, builder: &mut crate::metadata_capnp::xattr::Builder<'_>) {
         builder.set_val(&self.val);
         builder.set_key(&self.key);
     }

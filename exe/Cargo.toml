@@ -1,7 +1,16 @@
 [package]
 name = "puzzlefs"
 version = "0.1.0"
-authors = ["Tycho Andersen <tycho@tycho.pizza>"]
+authors = ["Tycho Andersen <tycho@tycho.pizza>", "Ariel Miculas <amiculas@cisco.com>"]
+description = """
+PuzzleFS is a next-generation container filesystem.
+"""
+documentation = "https://github.com/project-machine/puzzlefs"
+homepage = "https://github.com/project-machine/puzzlefs"
+repository = "https://github.com/project-machine/puzzlefs"
+keywords = ["fuse", "filesystem", "container", "cdc"]
+categories = ["filesystem"]
+license = "Apache-2.0"
 edition = "2021"
 
 [dependencies]
@@ -14,13 +23,7 @@ log = "0.4.17"
 env_logger = "0.9.3"
 syslog = "6.0.1"
 os_pipe = "1.1.2"
-format = { path = "../format" }
-builder = { path = "../builder" }
-oci = { path = "../oci" }
-reader = { path = "../reader" }
-extractor = { path = "../extractor" }
-fsverity_helpers = { path = "../fsverity_helpers" }
-compression = { path = "../compression" }
+puzzlefs-lib = { path = "../puzzlefs-lib", version = "0.1.0" }
 hex = "*"
 
 [dev-dependencies]

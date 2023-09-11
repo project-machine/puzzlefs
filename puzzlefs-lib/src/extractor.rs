@@ -1,12 +1,9 @@
-#[macro_use]
-extern crate anyhow;
-
-use format::InodeMode;
+use crate::format::InodeMode;
+use crate::oci::Image;
+use crate::reader::{PuzzleFS, WalkPuzzleFS};
 use log::info;
 use nix::sys::stat::{makedev, mknod, Mode, SFlag};
 use nix::unistd::{chown, mkfifo, symlinkat, Gid, Uid};
-use oci::Image;
-use reader::{PuzzleFS, WalkPuzzleFS};
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs::Permissions;
@@ -76,7 +73,7 @@ pub fn extract_rootfs(oci_dir: &str, tag: &str, extract_dir: &str) -> anyhow::Re
     fs::create_dir_all(dir)?;
     let mut pfs = PuzzleFS::open(image, tag, None)?;
     let mut walker = WalkPuzzleFS::walk(&mut pfs)?;
-    let mut host_to_pfs = HashMap::<format::Ino, PathBuf>::new();
+    let mut host_to_pfs = HashMap::<crate::format::Ino, PathBuf>::new();
 
     walker.try_for_each(|de| -> anyhow::Result<()> {
         let dir_entry = de?;
@@ -156,8 +153,8 @@ mod tests {
     use std::fs;
     use std::fs::File;
 
-    use builder::build_test_fs;
-    use oci::Image;
+    use crate::builder::build_test_fs;
+    use crate::oci::Image;
     use std::collections::HashMap;
     use std::os::unix::fs::MetadataExt;
     use walkdir::WalkDir;

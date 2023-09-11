@@ -2,18 +2,18 @@ extern crate fuser as fuse_ffi;
 
 use std::path::Path;
 
-use format::Result;
-use oci::Image;
+use crate::format::Result;
+use crate::oci::Image;
 
 mod puzzlefs;
 pub use puzzlefs::PuzzleFS;
 pub use puzzlefs::PUZZLEFS_IMAGE_MANIFEST_VERSION;
 
 pub mod fuse;
-pub use crate::fuse::Fuse;
+pub use fuse::Fuse;
 
 mod walk;
-use crate::fuse::PipeDescriptor;
+use fuse::PipeDescriptor;
 pub use walk::WalkPuzzleFS;
 
 // copied from the fuser function 'MountOption::from_str' because it's not exported

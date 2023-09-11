@@ -1,4 +1,4 @@
-use fsverity_helpers::check_fs_verity;
+use crate::fsverity_helpers::{check_fs_verity, get_fs_verity_digest};
 use std::any::Any;
 use std::backtrace::Backtrace;
 use std::convert::TryFrom;
@@ -7,13 +7,12 @@ use std::io;
 use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 
-use fsverity_helpers::get_fs_verity_digest;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as Sha2Digest, Sha256};
 use tempfile::NamedTempFile;
 
-use compression::{Compression, Decompressor};
-use format::{MetadataBlob, Result, Rootfs, VerityData, WireFormatError, SHA256_BLOCK_SIZE};
+use crate::compression::{Compression, Decompressor, Noop, Zstd};
+use crate::format::{MetadataBlob, Result, Rootfs, VerityData, WireFormatError, SHA256_BLOCK_SIZE};
 use openat::Dir;
 use std::io::{Error, ErrorKind};
 
@@ -94,8 +93,7 @@ impl Image {
         // generics may not be the best way to implement compression, alternatives:
         // trait objects, but they add runtime overhead
         // an enum together with enum_dispatch
-        let mut compressed_blob =
-            std::any::TypeId::of::<C>() != std::any::TypeId::of::<compression::Noop>();
+        let mut compressed_blob = std::any::TypeId::of::<C>() != std::any::TypeId::of::<Noop>();
 
         // without the clone, the io::copy leaves us with an empty slice
         // we're only cloning the reference, which is ok because the slice itself gets mutated
@@ -193,11 +191,11 @@ impl Image {
 
     pub fn fill_from_chunk(
         &self,
-        chunk: format::BlobRef,
+        chunk: crate::format::BlobRef,
         addl_offset: u64,
         buf: &mut [u8],
         verity_data: &Option<VerityData>,
-    ) -> format::Result<usize> {
+    ) -> crate::format::Result<usize> {
         let digest = &<Digest>::try_from(chunk)?;
         let file_verity;
         if let Some(verity) = verity_data {
@@ -213,9 +211,9 @@ impl Image {
             file_verity = None;
         }
         let mut blob = if chunk.compressed {
-            self.open_compressed_blob::<compression::Zstd>(digest, file_verity)?
+            self.open_compressed_blob::<Zstd>(digest, file_verity)?
         } else {
-            self.open_compressed_blob::<compression::Noop>(digest, file_verity)?
+            self.open_compressed_blob::<Noop>(digest, file_verity)?
         };
         blob.seek(io::SeekFrom::Start(chunk.offset + addl_offset))?;
         let n = blob.read(buf)?;
@@ -256,14 +254,14 @@ impl Image {
 mod tests {
     use super::*;
     use tempfile::tempdir;
-    type DefaultCompression = compression::Zstd;
+    type DefaultCompression = Zstd;
 
     #[test]
     fn test_put_blob_correct_hash() {
         let dir = tempdir().unwrap();
         let image: Image = Image::new(dir.path()).unwrap();
         let (desc, ..) = image
-            .put_blob::<compression::Noop, media_types::Chunk>("meshuggah rocks".as_bytes())
+            .put_blob::<Noop, media_types::Chunk>("meshuggah rocks".as_bytes())
             .unwrap();
 
         const DIGEST: &str = "3abd5ce0f91f640d88dca1f26b37037b02415927cacec9626d87668a715ec12d";

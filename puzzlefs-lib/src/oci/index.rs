@@ -5,8 +5,8 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::descriptor::Descriptor;
-use format::{Result, WireFormatError};
+use super::descriptor::Descriptor;
+use crate::format::{Result, WireFormatError};
 
 // the OCI spec says this must be 2 in order for older dockers to use image layouts, and that it
 // will probably be removed. We could hard code it to two, but let's use -1 as an additional

@@ -1,0 +1,50 @@
+[package]
+name = "puzzlefs-lib"
+version = "0.1.0"
+authors = ["Tycho Andersen <tycho@tycho.pizza>", "Ariel Miculas <amiculas@cisco.com>"]
+description = """
+Build, mount and extract PuzzleFS images.
+"""
+documentation = "http://docs.rs/puzzlefs-lib"
+homepage = "https://github.com/project-machine/puzzlefs"
+repository = "https://github.com/project-machine/puzzlefs"
+keywords = ["fuse", "filesystem", "container", "cdc"]
+categories = ["filesystem"]
+license = "Apache-2.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[build-dependencies]
+capnpc = "0.17"
+
+[dependencies]
+anyhow = "*"
+nix = "*"
+xattr = "*"
+log = "0.4.17"
+zstd = "0.12.3"
+serde = { version = "^1.0.27", features = [ "derive" ] }
+serde_json = "*"
+thiserror = "1.0.46"
+hex = "*"
+memmap2 = "0.5.10"
+capnp = "0.17"
+fs-verity = "0.2.0"
+sha2 = "0.10.6"
+walkdir = "2"
+# Fastcdc breaks semver and version 3.1 is not backwards compatible with 3.0
+fastcdc = "=3.0.0"
+fuser = {version = "0.11.1", default-features = false}
+os_pipe = "1.1.2"
+tempfile = "*"
+openat = "0.1.21"
+
+[dev-dependencies]
+tempfile = "*"
+anyhow = "*"
+walkdir = "2"
+serde = "*"
+sha2 = "0.10.6"
+hex = "*"
+xattr = "*"

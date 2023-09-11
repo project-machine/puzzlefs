@@ -1,4 +1,4 @@
-use format::{Result, WireFormatError, SHA256_BLOCK_SIZE};
+use crate::format::{Result, WireFormatError, SHA256_BLOCK_SIZE};
 use std::backtrace::Backtrace;
 use std::fs;
 use std::io::Write;

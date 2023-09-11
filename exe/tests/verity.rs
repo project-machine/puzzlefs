@@ -78,7 +78,7 @@ fn test_fs_verity() -> anyhow::Result<()> {
     let v = VeritySetup::new()?;
 
     let mount_path = Path::new(&v.mountpoint);
-    let rootfs = Path::new("../builder/test/test-1/");
+    let rootfs = Path::new("../puzzlefs-lib/src/builder/test/test-1/");
 
     let oci = mount_path.join("oci");
     let output = puzzlefs([
