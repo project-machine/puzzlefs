@@ -15,7 +15,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "*"
-nix = "*"
+nix = "0.27.1"
 clap = { version = "4.0.18", features = ["derive"] }
 daemonize = { git = "https://github.com/ariel-miculas/daemonize.git" }
 ctrlc = "3.2.0"
