@@ -19,3 +19,8 @@ jobs:
               run: |
                 sudo apt-get install skopeo umoci capnproto
             - run: make lint check
+            - name: publish
+              if: startsWith(github.ref, 'refs/tags/') && github.event_name == 'push'
+              run: cargo publish --token ${CRATES_TOKEN}
+              env:
+                CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
