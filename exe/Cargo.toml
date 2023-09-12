@@ -17,7 +17,8 @@ edition = "2021"
 anyhow = "*"
 nix = "0.27.1"
 clap = { version = "4.0.18", features = ["derive"] }
-daemonize = { git = "https://github.com/ariel-miculas/daemonize.git" }
+# Version 0.5 drops exit_action so we're stuck with 0.4
+daemonize = "0.4.1"
 ctrlc = "3.2.0"
 log = "0.4.17"
 env_logger = "0.9.3"
