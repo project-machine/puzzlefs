@@ -20,7 +20,7 @@ capnpc = "0.17"
 
 [dependencies]
 anyhow = "*"
-nix = "*"
+nix = { version = "0.27.1", features = ["user", "fs"] }
 xattr = "*"
 log = "0.4.17"
 zstd = "0.12.3"
