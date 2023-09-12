@@ -14,7 +14,7 @@ license = "Apache-2.0"
 edition = "2021"
 
 [dependencies]
-anyhow = "*"
+anyhow = "1.0.75"
 nix = "0.27.1"
 clap = { version = "4.0.18", features = ["derive"] }
 # Version 0.5 drops exit_action so we're stuck with 0.4
@@ -25,10 +25,10 @@ env_logger = "0.9.3"
 syslog = "6.0.1"
 os_pipe = "1.1.2"
 puzzlefs-lib = { path = "../puzzlefs-lib", version = "0.1.0" }
-hex = "*"
+hex = "0.4.3"
 
 [dev-dependencies]
-assert_cmd = "*"
-dir-diff = "*"
-tempfile = "*"
+assert_cmd = "2.0.12"
+dir-diff = "0.3.2"
+tempfile = "3.8.0"
 walkdir = "2"
