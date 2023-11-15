@@ -24,36 +24,36 @@ impl<W: Write> Compressor for NoopCompressor<W> {
     }
 }
 
-pub struct NoopDecompressor<R: Read + Seek + Send> {
+pub struct NoopDecompressor<R: Read + Seek> {
     decoder: Box<R>,
 }
 
-impl<R: Read + io::Seek + Send> Seek for NoopDecompressor<R> {
+impl<R: Read + io::Seek> Seek for NoopDecompressor<R> {
     fn seek(&mut self, offset: io::SeekFrom) -> io::Result<u64> {
         self.decoder.seek(offset)
     }
 }
 
-impl<R: Read + Seek + Send> Read for NoopDecompressor<R> {
+impl<R: Read + Seek> Read for NoopDecompressor<R> {
     fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
         self.decoder.read(out)
     }
 }
 
-impl<R: Read + Seek + Send> Decompressor for NoopDecompressor<R> {
+impl<R: Read + Seek> Decompressor for NoopDecompressor<R> {
     fn get_uncompressed_length(&mut self) -> io::Result<u64> {
         self.decoder.stream_len()
     }
 }
 
-impl<'a> Compression<'a> for Noop {
-    fn compress<W: std::io::Write + 'a>(dest: W) -> io::Result<Box<dyn Compressor + 'a>> {
+impl Compression for Noop {
+    fn compress<'a, W: std::io::Write + 'a>(dest: W) -> io::Result<Box<dyn Compressor + 'a>> {
         Ok(Box::new(NoopCompressor {
             encoder: Box::new(dest),
         }))
     }
 
-    fn decompress<R: std::io::Read + Seek + Send + 'a>(
+    fn decompress<'a, R: std::io::Read + Seek + 'a>(
         source: R,
     ) -> io::Result<Box<dyn Decompressor + 'a>> {
         Ok(Box::new(NoopDecompressor {

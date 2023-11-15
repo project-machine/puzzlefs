@@ -83,7 +83,7 @@ impl Image {
         PathBuf::from("blobs/sha256")
     }
 
-    pub fn put_blob<C: for<'a> Compression<'a> + Any, MT: media_types::MediaType>(
+    pub fn put_blob<C: Compression + Any, MT: media_types::MediaType>(
         &self,
         buf: &[u8],
     ) -> Result<(Descriptor, [u8; SHA256_BLOCK_SIZE], bool)> {
@@ -149,7 +149,7 @@ impl Image {
         Ok(file)
     }
 
-    pub fn open_compressed_blob<C: for<'a> Compression<'a>>(
+    pub fn open_compressed_blob<C: Compression>(
         &self,
         digest: &Digest,
         verity: Option<&[u8]>,
@@ -176,7 +176,7 @@ impl Image {
         Ok(file)
     }
 
-    pub fn open_rootfs_blob<C: for<'a> Compression<'a>>(
+    pub fn open_rootfs_blob<C: Compression>(
         &self,
         tag: &str,
         verity: Option<&[u8]>,

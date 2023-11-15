@@ -3,7 +3,7 @@ use std::cmp::min;
 use std::convert::TryFrom;
 use std::convert::TryInto;
 use std::io;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, Write};
 
 use crate::compression::{Compression, Compressor, Decompressor};
 
@@ -85,13 +85,15 @@ impl io::Read for ZstdDecompressor {
 }
 pub struct Zstd {}
 
-impl<'a> Compression<'a> for Zstd {
-    fn compress<W: Write + 'a>(dest: W) -> io::Result<Box<dyn Compressor + 'a>> {
+impl Compression for Zstd {
+    fn compress<'a, W: Write + 'a>(dest: W) -> io::Result<Box<dyn Compressor + 'a>> {
         let encoder = zstd::stream::write::Encoder::new(dest, COMPRESSION_LEVEL)?;
         Ok(Box::new(ZstdCompressor { encoder }))
     }
 
-    fn decompress<R: Read>(mut source: R) -> io::Result<Box<dyn Decompressor>> {
+    fn decompress<'a, R: Read + Seek + 'a>(
+        mut source: R,
+    ) -> io::Result<Box<dyn Decompressor + 'a>> {
         let mut contents = Vec::new();
         source.read_to_end(&mut contents)?;
         let mut decompressor = zstd::bulk::Decompressor::new()?;
