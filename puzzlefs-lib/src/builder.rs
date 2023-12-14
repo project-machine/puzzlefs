@@ -106,7 +106,7 @@ fn serialize_metadata(inodes: Vec<Inode>) -> Result<Vec<u8>> {
     Ok(buf)
 }
 
-fn process_chunks<C: for<'a> Compression<'a> + Any>(
+fn process_chunks<C: Compression + Any>(
     oci: &Image,
     mut chunker: StreamCDC,
     files: &mut [File],
@@ -178,7 +178,7 @@ fn process_chunks<C: for<'a> Compression<'a> + Any>(
     Ok(())
 }
 
-fn build_delta<C: for<'a> Compression<'a> + Any>(
+fn build_delta<C: Compression + Any>(
     rootfs: &Path,
     oci: &Image,
     mut existing: Option<PuzzleFS>,
@@ -414,7 +414,7 @@ fn build_delta<C: for<'a> Compression<'a> + Any>(
     Ok(desc)
 }
 
-pub fn build_initial_rootfs<C: for<'a> Compression<'a> + Any>(
+pub fn build_initial_rootfs<C: Compression + Any>(
     rootfs: &Path,
     oci: &Image,
 ) -> Result<Descriptor> {
@@ -440,7 +440,7 @@ pub fn build_initial_rootfs<C: for<'a> Compression<'a> + Any>(
 
 // add_rootfs_delta adds whatever the delta between the current rootfs and the puzzlefs
 // representation from the tag is.
-pub fn add_rootfs_delta<C: for<'a> Compression<'a> + Any>(
+pub fn add_rootfs_delta<C: Compression + Any>(
     rootfs_path: &Path,
     oci: Image,
     tag: &str,
@@ -554,7 +554,7 @@ pub mod tests {
         // there should be a blob that matches the hash of the test data, since it all gets input
         // as one chunk and there's only one file
         const FILE_DIGEST: &str =
-            "a7b1fbc3c77f9ffc40c051e3608d607d63eebcd23c559958043eccb64bdab7ff";
+            "3eee1082ab3babf6c1595f1069d11ebc2a60135890a11e402e017ddd831a220d";
 
         let md = fs::symlink_metadata(image.blob_path().join(FILE_DIGEST)).unwrap();
         assert!(md.is_file());
