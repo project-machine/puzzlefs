@@ -1,8 +1,7 @@
 @0x84ae5e6e88b7cbb7;
 
 struct Chr {
-    major@0: UInt64;
-    minor@1: UInt64;
+    version@0: UInt64;
 }
 
 struct DirEntry {
@@ -16,8 +15,7 @@ struct Dir {
 }
 
 struct Blk {
-    major@0: UInt64;
-    minor@1: UInt64;
+    version@0: UInt64;
 }
 
 struct FileChunk {

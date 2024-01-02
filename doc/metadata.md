@@ -90,8 +90,7 @@
 
             // chr
             struct {
-                dev_t major;
-                dev_t minor;
+                dev_t version;
             },
 
             // dir
@@ -102,8 +101,7 @@
             // blk; do we even want these? seems like maybe not since they're
             // system specific.
             struct {
-                dev_t major;
-                dev_t minor;
+                version;
             },
 
             // reg

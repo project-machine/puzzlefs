@@ -1,7 +1,6 @@
 use capnp::{message, serialize};
 use memmap2::{Mmap, MmapOptions};
 use nix::errno::Errno;
-use nix::sys::stat;
 use std::backtrace::Backtrace;
 use std::collections::BTreeMap;
 use std::convert::{TryFrom, TryInto};
@@ -243,10 +242,7 @@ mod tests {
             },
             Inode {
                 ino: 65343,
-                mode: InodeMode::Chr {
-                    major: 64,
-                    minor: 65536,
-                },
+                mode: InodeMode::Chr { version: 64 },
                 uid: 10,
                 gid: 10000,
                 permissions: DEFAULT_DIRECTORY_PERMISSIONS,
@@ -372,18 +368,16 @@ impl Inode {
         let mode = if file_type.is_fifo() {
             InodeMode::Fifo
         } else if file_type.is_char_device() {
-            let major = stat::major(md.rdev());
-            let minor = stat::minor(md.rdev());
-            InodeMode::Chr { major, minor }
+            let version = md.rdev();
+            InodeMode::Chr { version }
         } else if file_type.is_dir() {
             return Err(io::Error::new(
                 io::ErrorKind::Other,
                 format!("{ino} is a dir"),
             ));
         } else if file_type.is_block_device() {
-            let major = stat::major(md.rdev());
-            let minor = stat::minor(md.rdev());
-            InodeMode::Blk { major, minor }
+            let version = md.rdev();
+            InodeMode::Blk { version }
         } else if file_type.is_file() {
             return Err(io::Error::new(
                 io::ErrorKind::Other,
@@ -480,9 +474,9 @@ impl Inode {
 pub enum InodeMode {
     Unknown,
     Fifo,
-    Chr { major: u64, minor: u64 },
+    Chr { version: u64 },
     Dir { dir_list: DirList },
-    Blk { major: u64, minor: u64 },
+    Blk { version: u64 },
     File { chunks: Vec<FileChunk> },
     Lnk,
     Sock,
@@ -500,15 +494,13 @@ impl InodeMode {
             Ok(crate::metadata_capnp::inode::mode::Chr(reader)) => {
                 let r = reader?;
                 Ok(InodeMode::Chr {
-                    major: r.get_major(),
-                    minor: r.get_minor(),
+                    version: r.get_version(),
                 })
             }
             Ok(crate::metadata_capnp::inode::mode::Blk(reader)) => {
                 let r = reader?;
                 Ok(InodeMode::Blk {
-                    major: r.get_major(),
-                    minor: r.get_minor(),
+                    version: r.get_version(),
                 })
             }
             Ok(crate::metadata_capnp::inode::mode::File(reader)) => {
@@ -554,10 +546,9 @@ impl InodeMode {
         match &self {
             Self::Unknown => builder.set_unknown(()),
             Self::Fifo => builder.set_fifo(()),
-            Self::Chr { major, minor } => {
+            Self::Chr { version } => {
                 let mut chr_builder = builder.reborrow().init_chr();
-                chr_builder.set_minor(*minor);
-                chr_builder.set_major(*major);
+                chr_builder.set_version(*version);
             }
             Self::Dir { dir_list } => {
                 let mut dir_builder = builder.reborrow().init_dir();
@@ -572,10 +563,9 @@ impl InodeMode {
                     dir_entry_builder.set_name(&entry.name);
                 }
             }
-            Self::Blk { major, minor } => {
+            Self::Blk { version } => {
                 let mut blk_builder = builder.reborrow().init_blk();
-                blk_builder.set_minor(*minor);
-                blk_builder.set_major(*major);
+                blk_builder.set_version(*version);
             }
             Self::File { chunks } => {
                 let chunks_len = chunks.len().try_into()?;
