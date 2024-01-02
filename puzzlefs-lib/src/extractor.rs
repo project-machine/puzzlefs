@@ -97,11 +97,11 @@ pub fn extract_rootfs(oci_dir: &str, tag: &str, extract_dir: &str) -> anyhow::Re
             InodeMode::Fifo => {
                 mkfifo(&path, Mode::S_IRWXU)?;
             }
-            InodeMode::Chr { major, minor } => {
-                mknod(&path, SFlag::S_IFCHR, Mode::S_IRWXU, makedev(major, minor))?;
+            InodeMode::Chr { version } => {
+                mknod(&path, SFlag::S_IFCHR, Mode::S_IRWXU, makedev(version, 0))?;
             }
-            InodeMode::Blk { major, minor } => {
-                mknod(&path, SFlag::S_IFBLK, Mode::S_IRWXU, makedev(major, minor))?;
+            InodeMode::Blk { version } => {
+                mknod(&path, SFlag::S_IFBLK, Mode::S_IRWXU, makedev(version, 0))?;
             }
             InodeMode::Lnk => {
                 let target = dir_entry.inode.symlink_target()?;
