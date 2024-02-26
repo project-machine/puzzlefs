@@ -1,6 +1,5 @@
 use log::{debug, warn};
 use os_pipe::PipeWriter;
-use std::convert::TryInto;
 use std::ffi::CString;
 use std::ffi::OsStr;
 use std::ffi::OsString;
@@ -680,7 +679,6 @@ mod tests {
     use std::io;
     use std::path::Path;
 
-    use hex;
     use sha2::{Digest, Sha256};
     use tempfile::tempdir;
 
