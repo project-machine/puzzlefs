@@ -1,7 +1,6 @@
 use nix::errno::Errno;
 use std::backtrace::Backtrace;
 use std::cmp::min;
-use std::convert::TryFrom;
 use std::io;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path};
@@ -231,7 +230,6 @@ mod tests {
     use tempfile::tempdir;
 
     use crate::builder::build_test_fs;
-    use crate::oci::Image;
 
     use super::*;
 

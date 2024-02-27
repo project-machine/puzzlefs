@@ -1,7 +1,6 @@
 use crate::fsverity_helpers::{check_fs_verity, get_fs_verity_digest};
 use std::any::Any;
 use std::backtrace::Backtrace;
-use std::convert::TryFrom;
 use std::fs;
 use std::io;
 use std::io::{Read, Seek};

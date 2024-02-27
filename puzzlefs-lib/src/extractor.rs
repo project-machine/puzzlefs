@@ -150,12 +150,9 @@ pub fn extract_rootfs(oci_dir: &str, tag: &str, extract_dir: &str) -> anyhow::Re
 mod tests {
     use tempfile::{tempdir, TempDir};
 
-    use std::fs;
     use std::fs::File;
 
     use crate::builder::build_test_fs;
-    use crate::oci::Image;
-    use std::collections::HashMap;
     use std::os::unix::fs::MetadataExt;
     use walkdir::WalkDir;
 

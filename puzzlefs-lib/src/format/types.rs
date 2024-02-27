@@ -4,7 +4,6 @@ use nix::errno::Errno;
 use nix::sys::stat;
 use std::backtrace::Backtrace;
 use std::collections::BTreeMap;
-use std::convert::{TryFrom, TryInto};
 use std::ffi::OsStr;
 use std::ffi::OsString;
 use std::fmt;
@@ -15,7 +14,6 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::ffi::OsStringExt;
 use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 use std::path::Path;
-use std::vec::Vec;
 
 use serde::de::Error as SerdeError;
 use serde::de::Visitor;

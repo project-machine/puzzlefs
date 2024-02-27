@@ -522,13 +522,10 @@ pub mod tests {
     use super::*;
 
     use std::backtrace::Backtrace;
-    use std::convert::TryInto;
 
     use tempfile::tempdir;
 
-    use crate::oci::Digest;
     use crate::reader::WalkPuzzleFS;
-    use std::convert::TryFrom;
     use std::path::PathBuf;
     use tempfile::TempDir;
 

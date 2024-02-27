@@ -78,7 +78,6 @@ mod tests {
     use std::path::Path;
 
     use crate::builder::build_test_fs;
-    use crate::oci::Image;
 
     use super::*;
 
