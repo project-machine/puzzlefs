@@ -16,37 +16,37 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [build-dependencies]
-capnpc = "0.17"
+capnpc = "0.19"
 
 [dependencies]
 anyhow = "1.0.75"
 nix = { version = "0.27.1", features = ["user", "fs"] }
-xattr = "1.0.1"
+xattr = "1.3.0"
 log = "0.4.17"
-zstd = "0.12.3"
-serde = { version = "^1.0.27", features = [ "derive" ] }
+zstd = "0.13.1"
+serde = { version = "1.0.27", features = [ "derive" ] }
 serde_json = "1.0.106"
 thiserror = "1.0.46"
 hex = "0.4.3"
-memmap2 = "0.5.10"
-capnp = "0.17"
+memmap2 = "0.9.4"
+capnp = "0.19"
 fs-verity = "0.2.0"
-sha2 = "0.10.6"
+sha2 = "0.10.8"
 walkdir = "2"
 # Fastcdc breaks semver and version 3.1 is not backwards compatible with 3.0
 fastcdc = "=3.0.0"
-fuser = {version = "0.11.1", default-features = false}
+fuser = {version = "0.14", default-features = false}
 os_pipe = "1.1.2"
-tempfile = "3.8.0"
+tempfile = "3.10"
 openat = "0.1.21"
 zstd-seekable = "0.1.23"
 
 
 [dev-dependencies]
-tempfile = "3.8.0"
+tempfile = "3.10"
 anyhow = "1.0.75"
 walkdir = "2"
 serde = "1.0.27"
 sha2 = "0.10.6"
 hex = "0.4.3"
-xattr = "1.0.1"
+xattr = "1.3.0"
