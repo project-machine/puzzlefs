@@ -312,7 +312,7 @@ fn build_delta<C: Compression + Any>(
                 );
 
                 // if it was a hard link, we don't need to actually render it again
-                if host_to_pfs.get(&md.ino()).is_some() {
+                if host_to_pfs.contains_key(&md.ino()) {
                     continue;
                 }
             }

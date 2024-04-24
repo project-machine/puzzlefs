@@ -30,5 +30,5 @@ hex = "0.4.3"
 [dev-dependencies]
 assert_cmd = "2.0.12"
 dir-diff = "0.3.2"
-tempfile = "3.8.0"
+tempfile = "3.10"
 walkdir = "2"

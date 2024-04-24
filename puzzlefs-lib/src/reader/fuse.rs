@@ -485,7 +485,7 @@ impl Filesystem for Fuse {
         match self._lookup(parent, name) {
             Ok(attr) => {
                 // http://libfuse.github.io/doxygen/structfuse__entry__param.html
-                let ttl = Duration::new(std::u64::MAX, 0);
+                let ttl = Duration::new(u64::MAX, 0);
                 let generation = 0;
                 reply.entry(&ttl, &attr, generation)
             }
@@ -500,7 +500,7 @@ impl Filesystem for Fuse {
         match self._getattr(ino) {
             Ok(attr) => {
                 // http://libfuse.github.io/doxygen/structfuse__entry__param.html
-                let ttl = Duration::new(std::u64::MAX, 0);
+                let ttl = Duration::new(u64::MAX, 0);
                 reply.attr(&ttl, &attr)
             }
             Err(e) => {
