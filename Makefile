@@ -1,12 +1,15 @@
 SRC=$(shell find . -name \*.rs | grep -v "^./target")
-
-.PHONY: debug
-debug:
-	cargo build
+PREFIX?=/usr/local
+ROOT_SBINDIR?=$(PREFIX)/sbin
+INSTALL=install
 
 .PHONY: release
 release:
 	cargo build --release
+
+.PHONY: debug
+debug:
+	cargo build
 
 .PHONY: check
 check:
@@ -24,3 +27,6 @@ fmt:
 .PHONY: clean
 clean:
 	-cargo clean
+
+install:
+	$(INSTALL) -m0755 -D target/release/puzzlefs -t $(ROOT_SBINDIR)
