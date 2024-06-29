@@ -794,10 +794,8 @@ impl Serialize for Digest {
 impl TryFrom<&str> for Digest {
     type Error = FromHexError;
     fn try_from(s: &str) -> std::result::Result<Self, Self::Error> {
-        let digest = hex::decode(s)?;
-        let digest: [u8; SHA256_BLOCK_SIZE] = digest
-            .try_into()
-            .map_err(|_| FromHexError::InvalidStringLength)?;
+        let mut digest: [u8; SHA256_BLOCK_SIZE] = [0; SHA256_BLOCK_SIZE];
+        hex::decode_to_slice(s, &mut digest)?;
         Ok(Digest(digest))
     }
 }
