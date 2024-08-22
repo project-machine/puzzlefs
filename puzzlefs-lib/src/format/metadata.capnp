@@ -63,3 +63,14 @@ struct Inode {
 struct InodeVector {
     inodes@0: List(Inode);
 }
+
+struct VerityData {
+        digest@0: Data;
+        verity@1: Data;
+}
+
+struct Rootfs {
+        metadatas@0: List(BlobRef);
+        fsVerityData@1: List(VerityData);
+        manifestVersion@2: UInt64;
+}

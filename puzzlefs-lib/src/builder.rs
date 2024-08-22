@@ -23,10 +23,10 @@ use crate::format::{
     BlobRef, DirEnt, DirList, FileChunk, FileChunkList, Ino, Inode, InodeAdditional, InodeMode,
     Result, Rootfs, VerityData, WireFormatError,
 };
+use crate::metadata_capnp;
 use crate::oci::media_types;
 use crate::oci::{Descriptor, Image};
 use crate::reader::{PuzzleFS, PUZZLEFS_IMAGE_MANIFEST_VERSION};
-use crate::{manifest_capnp, metadata_capnp};
 
 use nix::errno::Errno;
 
@@ -79,7 +79,7 @@ struct Other {
 
 fn serialize_manifest(rootfs: Rootfs) -> Result<Vec<u8>> {
     let mut message = ::capnp::message::Builder::new_default();
-    let mut capnp_rootfs = message.init_root::<manifest_capnp::rootfs::Builder<'_>>();
+    let mut capnp_rootfs = message.init_root::<metadata_capnp::rootfs::Builder<'_>>();
 
     rootfs.fill_capnp(&mut capnp_rootfs)?;
 

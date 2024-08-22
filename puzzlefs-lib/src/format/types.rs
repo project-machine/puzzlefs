@@ -38,11 +38,11 @@ pub struct Rootfs {
 impl Rootfs {
     pub fn open<R: Read>(f: R) -> Result<Rootfs> {
         let message_reader = serialize::read_message(f, ::capnp::message::ReaderOptions::new())?;
-        let rootfs = message_reader.get_root::<crate::manifest_capnp::rootfs::Reader<'_>>()?;
+        let rootfs = message_reader.get_root::<crate::metadata_capnp::rootfs::Reader<'_>>()?;
         Self::from_capnp(rootfs)
     }
 
-    pub fn from_capnp(reader: crate::manifest_capnp::rootfs::Reader<'_>) -> Result<Self> {
+    pub fn from_capnp(reader: crate::metadata_capnp::rootfs::Reader<'_>) -> Result<Self> {
         let metadatas = reader.get_metadatas()?;
 
         let metadata_vec = metadatas
@@ -68,7 +68,7 @@ impl Rootfs {
 
     pub fn fill_capnp(
         &self,
-        builder: &mut crate::manifest_capnp::rootfs::Builder<'_>,
+        builder: &mut crate::metadata_capnp::rootfs::Builder<'_>,
     ) -> Result<()> {
         builder.set_manifest_version(self.manifest_version);
 
