@@ -6,13 +6,12 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path};
 use std::sync::Arc;
 
-use crate::compression::Noop;
 use crate::format::{
-    DirEnt, Ino, Inode, InodeMode, MetadataBlob, Result, VerityData, WireFormatError,
+    DirEnt, Ino, Inode, InodeMode, Result, RootfsReader, VerityData, WireFormatError,
 };
-use crate::oci::{Digest, Image};
+use crate::oci::Image;
 
-pub const PUZZLEFS_IMAGE_MANIFEST_VERSION: u64 = 2;
+pub const PUZZLEFS_IMAGE_MANIFEST_VERSION: u64 = 3;
 
 pub(crate) fn file_read(
     oci: &Image,
@@ -74,71 +73,42 @@ pub(crate) fn file_read(
 
 pub struct PuzzleFS {
     pub oci: Arc<Image>,
-    layers: Vec<MetadataBlob>,
+    rootfs: RootfsReader,
     pub verity_data: Option<VerityData>,
     pub manifest_verity: Option<Vec<u8>>,
 }
 
 impl PuzzleFS {
     pub fn open(oci: Image, tag: &str, manifest_verity: Option<&[u8]>) -> Result<PuzzleFS> {
-        let rootfs = oci.open_rootfs_blob::<Noop>(tag, manifest_verity)?;
+        let rootfs = oci.open_rootfs_blob(tag, manifest_verity)?;
 
-        if rootfs.manifest_version != PUZZLEFS_IMAGE_MANIFEST_VERSION {
+        if rootfs.get_manifest_version()? != PUZZLEFS_IMAGE_MANIFEST_VERSION {
             return Err(WireFormatError::InvalidImageVersion(
                 format!(
                     "got {}, expected {}",
-                    rootfs.manifest_version, PUZZLEFS_IMAGE_MANIFEST_VERSION
+                    rootfs.get_manifest_version()?,
+                    PUZZLEFS_IMAGE_MANIFEST_VERSION
                 ),
                 Backtrace::capture(),
             ));
         }
 
         let verity_data = if manifest_verity.is_some() {
-            Some(rootfs.fs_verity_data)
+            Some(rootfs.get_verity_data()?)
         } else {
             None
         };
-        let layers = rootfs
-            .metadatas
-            .iter()
-            .map(|md| -> Result<MetadataBlob> {
-                let digest = <Digest>::try_from(md)?;
-                let file_verity = if let Some(verity) = &verity_data {
-                    Some(
-                        &verity.get(&digest.underlying()).ok_or(
-                            WireFormatError::InvalidFsVerityData(
-                                format!("missing verity data {digest}"),
-                                Backtrace::capture(),
-                            ),
-                        )?[..],
-                    )
-                } else {
-                    None
-                };
-                oci.open_metadata_blob(&digest, file_verity)
-            })
-            .collect::<Result<Vec<MetadataBlob>>>()?;
+
         Ok(PuzzleFS {
             oci: Arc::new(oci),
-            layers,
+            rootfs,
             verity_data,
             manifest_verity: manifest_verity.map(|e| e.to_vec()),
         })
     }
 
     pub fn find_inode(&self, ino: u64) -> Result<Inode> {
-        for layer in self.layers.iter() {
-            if let Some(inode) = layer.find_inode(ino)? {
-                let inode = Inode::from_capnp(inode)?;
-                if let InodeMode::Wht = inode.mode {
-                    // TODO: seems like this should really be an Option.
-                    return Err(WireFormatError::from_errno(Errno::ENOENT));
-                }
-                return Ok(inode);
-            }
-        }
-
-        Err(WireFormatError::from_errno(Errno::ENOENT))
+        self.rootfs.find_inode(ino)
     }
 
     // lookup performs a path-based lookup in this puzzlefs
@@ -174,14 +144,7 @@ impl PuzzleFS {
     }
 
     pub fn max_inode(&self) -> Result<Ino> {
-        let mut max: Ino = 1;
-        for layer in self.layers.iter() {
-            if let Some(ino) = layer.max_ino()? {
-                max = std::cmp::max(ino, max)
-            }
-        }
-
-        Ok(max)
+        self.rootfs.max_inode()
     }
 }
 

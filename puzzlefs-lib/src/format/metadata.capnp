@@ -70,7 +70,7 @@ struct VerityData {
 }
 
 struct Rootfs {
-        metadatas@0: List(BlobRef);
+        metadatas@0: List(InodeVector);
         fsVerityData@1: List(VerityData);
         manifestVersion@2: UInt64;
 }

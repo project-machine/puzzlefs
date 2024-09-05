@@ -9,7 +9,6 @@ use std::ffi::OsString;
 use std::fmt;
 use std::fs;
 use std::io;
-use std::io::Read;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::ffi::OsStringExt;
 use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
@@ -30,25 +29,25 @@ pub type VerityData = BTreeMap<[u8; SHA256_BLOCK_SIZE], [u8; SHA256_BLOCK_SIZE]>
 
 #[derive(Debug)]
 pub struct Rootfs {
-    pub metadatas: Vec<BlobRef>,
+    pub metadatas: Vec<Vec<Inode>>,
     pub fs_verity_data: VerityData,
     pub manifest_version: u64,
 }
 
-impl Rootfs {
-    pub fn open<R: Read>(f: R) -> Result<Rootfs> {
-        let message_reader = serialize::read_message(f, ::capnp::message::ReaderOptions::new())?;
-        let rootfs = message_reader.get_root::<crate::metadata_capnp::rootfs::Reader<'_>>()?;
-        Self::from_capnp(rootfs)
+impl TryFrom<RootfsReader> for Rootfs {
+    type Error = WireFormatError;
+    fn try_from(rootfs_reader: RootfsReader) -> Result<Self> {
+        Rootfs::from_capnp(rootfs_reader.reader.get()?)
     }
+}
 
+impl Rootfs {
     pub fn from_capnp(reader: crate::metadata_capnp::rootfs::Reader<'_>) -> Result<Self> {
-        let metadatas = reader.get_metadatas()?;
-
-        let metadata_vec = metadatas
+        let metadata_vec = reader
+            .get_metadatas()?
             .iter()
-            .map(BlobRef::from_capnp)
-            .collect::<Result<Vec<BlobRef>>>()?;
+            .map(InodeVector::from_capnp)
+            .collect::<Result<Vec<Vec<_>>>>()?;
 
         let capnp_verities = reader.get_fs_verity_data()?;
         let mut fs_verity_data = VerityData::new();
@@ -78,7 +77,7 @@ impl Rootfs {
         for (i, metadata) in self.metadatas.iter().enumerate() {
             // we already checked that the length of metadatas fits inside a u32
             let mut capnp_metadata = capnp_metadatas.reborrow().get(i as u32);
-            metadata.fill_capnp(&mut capnp_metadata);
+            InodeVector::fill_capnp(metadata, &mut capnp_metadata)?;
         }
 
         let verity_data_len = self.fs_verity_data.len().try_into()?;
@@ -92,6 +91,72 @@ impl Rootfs {
         }
 
         Ok(())
+    }
+}
+
+pub struct RootfsReader {
+    reader: message::TypedReader<
+        ::capnp::serialize::BufferSegments<Mmap>,
+        crate::metadata_capnp::rootfs::Owned,
+    >,
+}
+
+impl RootfsReader {
+    pub fn open(f: fs::File) -> Result<Self> {
+        // We know the loaded message is safe, so we're allowing unlimited reads.
+        let unlimited_reads = message::ReaderOptions {
+            traversal_limit_in_words: None,
+            nesting_limit: 64,
+        };
+        let mmapped_region = unsafe { MmapOptions::new().map_copy_read_only(&f)? };
+        let segments = serialize::BufferSegments::new(mmapped_region, unlimited_reads)?;
+        let reader = message::Reader::new(segments, unlimited_reads).into_typed();
+
+        Ok(Self { reader })
+    }
+
+    pub fn get_manifest_version(&self) -> Result<u64> {
+        Ok(self.reader.get()?.get_manifest_version())
+    }
+
+    pub fn get_verity_data(&self) -> Result<VerityData> {
+        let mut fs_verity_data = VerityData::new();
+
+        let capnp_verities = self.reader.get()?.get_fs_verity_data()?;
+        for capnp_verity in capnp_verities {
+            let digest = capnp_verity.get_digest()?.try_into()?;
+            let verity = capnp_verity.get_verity()?.try_into()?;
+            fs_verity_data.insert(digest, verity);
+        }
+        Ok(fs_verity_data)
+    }
+
+    pub fn find_inode(&self, ino: u64) -> Result<Inode> {
+        for layer in self.reader.get()?.get_metadatas()?.iter() {
+            let inode_vector = InodeVector { reader: layer };
+
+            if let Some(inode) = inode_vector.find_inode(ino)? {
+                let inode = Inode::from_capnp(inode)?;
+                if let InodeMode::Wht = inode.mode {
+                    // TODO: seems like this should really be an Option.
+                    return Err(WireFormatError::from_errno(Errno::ENOENT));
+                }
+                return Ok(inode);
+            }
+        }
+
+        Err(WireFormatError::from_errno(Errno::ENOENT))
+    }
+
+    pub fn max_inode(&self) -> Result<Ino> {
+        let mut max: Ino = 1;
+        for layer in self.reader.get()?.get_metadatas()?.iter() {
+            let inode_vector = InodeVector { reader: layer };
+            if let Some(ino) = inode_vector.max_ino()? {
+                max = std::cmp::max(ino, max)
+            }
+        }
+        Ok(max)
     }
 }
 
@@ -699,32 +764,16 @@ impl Xattr {
     }
 }
 
-pub struct MetadataBlob {
-    reader: message::TypedReader<
-        ::capnp::serialize::BufferSegments<Mmap>,
-        crate::metadata_capnp::inode_vector::Owned,
-    >,
+pub struct InodeVector<'a> {
+    reader: crate::metadata_capnp::inode_vector::Reader<'a>,
 }
 
-impl MetadataBlob {
-    pub fn new(f: fs::File) -> Result<MetadataBlob> {
-        // We know the loaded message is safe, so we're allowing unlimited reads.
-        let unlimited_reads = message::ReaderOptions {
-            traversal_limit_in_words: None,
-            nesting_limit: 64,
-        };
-        let mmapped_region = unsafe { MmapOptions::new().map_copy_read_only(&f)? };
-        let segments = serialize::BufferSegments::new(mmapped_region, unlimited_reads)?;
-        let reader = message::Reader::new(segments, unlimited_reads).into_typed();
-
-        Ok(MetadataBlob { reader })
-    }
-
+impl<'a> InodeVector<'a> {
     pub fn get_inode_vector(
         &self,
     ) -> ::capnp::Result<::capnp::struct_list::Reader<'_, crate::metadata_capnp::inode::Owned>>
     {
-        self.reader.get()?.get_inodes()
+        self.reader.get_inodes()
     }
 
     pub fn find_inode(&self, ino: Ino) -> Result<Option<crate::metadata_capnp::inode::Reader<'_>>> {
@@ -758,6 +807,32 @@ impl MetadataBlob {
         let inodes = self.get_inode_vector()?;
         let last_index = inodes.len() - 1;
         Ok(Some(inodes.get(last_index).get_ino()))
+    }
+
+    pub fn from_capnp(
+        reader: crate::metadata_capnp::inode_vector::Reader<'a>,
+    ) -> Result<Vec<Inode>> {
+        reader
+            .get_inodes()?
+            .iter()
+            .map(|inode| Inode::from_capnp(inode))
+            .collect()
+    }
+
+    fn fill_capnp(
+        inodes: &[Inode],
+        builder: &mut crate::metadata_capnp::inode_vector::Builder<'_>,
+    ) -> Result<()> {
+        let inodes_len = inodes.len().try_into()?;
+        let mut capnp_inodes = builder.reborrow().init_inodes(inodes_len);
+
+        for (i, inode) in inodes.iter().enumerate() {
+            // we already checked that the length of pfs_inodes fits inside a u32
+            let mut capnp_inode = capnp_inodes.reborrow().get(i as u32);
+            inode.fill_capnp(&mut capnp_inode)?;
+        }
+
+        Ok(())
     }
 }
 

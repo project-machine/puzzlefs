@@ -11,7 +11,7 @@ use sha2::{Digest as Sha2Digest, Sha256};
 use tempfile::NamedTempFile;
 
 use crate::compression::{Compression, Decompressor, Noop, Zstd};
-use crate::format::{MetadataBlob, Result, Rootfs, VerityData, WireFormatError, SHA256_BLOCK_SIZE};
+use crate::format::{Result, RootfsReader, VerityData, WireFormatError, SHA256_BLOCK_SIZE};
 use openat::Dir;
 use std::io::{Error, ErrorKind};
 
@@ -157,15 +157,6 @@ impl Image {
         C::decompress(f)
     }
 
-    pub fn open_metadata_blob(
-        &self,
-        digest: &Digest,
-        verity: Option<&[u8]>,
-    ) -> Result<MetadataBlob> {
-        let f = self.open_raw_blob(digest, verity)?;
-        MetadataBlob::new(f)
-    }
-
     pub fn get_image_manifest_fd(&self, tag: &str) -> Result<fs::File> {
         let index = self.get_index()?;
         let desc = index
@@ -175,17 +166,14 @@ impl Image {
         Ok(file)
     }
 
-    pub fn open_rootfs_blob<C: Compression>(
-        &self,
-        tag: &str,
-        verity: Option<&[u8]>,
-    ) -> Result<Rootfs> {
+    pub fn open_rootfs_blob(&self, tag: &str, verity: Option<&[u8]>) -> Result<RootfsReader> {
         let index = self.get_index()?;
         let desc = index
             .find_tag(tag)
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("no tag {tag}")))?;
-        let rootfs = Rootfs::open(self.open_compressed_blob::<C>(&desc.digest, verity)?)?;
-        Ok(rootfs)
+
+        let rootfs = self.open_raw_blob(&desc.digest, verity)?;
+        RootfsReader::open(rootfs)
     }
 
     pub fn fill_from_chunk(
