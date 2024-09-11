@@ -1,8 +1,7 @@
 use crate::common::{AVG_CHUNK_SIZE, MAX_CHUNK_SIZE, MIN_CHUNK_SIZE};
 use crate::compression::{Compression, Noop, Zstd};
 use crate::fsverity_helpers::{
-    check_fs_verity, fsverity_enable, get_fs_verity_digest, InnerHashAlgorithm,
-    FS_VERITY_BLOCK_SIZE_DEFAULT,
+    check_fs_verity, fsverity_enable, InnerHashAlgorithm, FS_VERITY_BLOCK_SIZE_DEFAULT,
 };
 use crate::oci::Digest;
 use std::any::Any;
@@ -23,10 +22,10 @@ use crate::format::{
     BlobRef, DirEnt, DirList, FileChunk, FileChunkList, Ino, Inode, InodeAdditional, InodeMode,
     Result, Rootfs, VerityData, WireFormatError,
 };
+use crate::metadata_capnp;
 use crate::oci::media_types;
 use crate::oci::{Descriptor, Image};
 use crate::reader::{PuzzleFS, PUZZLEFS_IMAGE_MANIFEST_VERSION};
-use crate::{manifest_capnp, metadata_capnp};
 
 use nix::errno::Errno;
 
@@ -77,29 +76,11 @@ struct Other {
     additional: Option<InodeAdditional>,
 }
 
-fn serialize_manifest(rootfs: Rootfs) -> Result<Vec<u8>> {
+fn serialize_metadata(rootfs: Rootfs) -> Result<Vec<u8>> {
     let mut message = ::capnp::message::Builder::new_default();
-    let mut capnp_rootfs = message.init_root::<manifest_capnp::rootfs::Builder<'_>>();
+    let mut capnp_rootfs = message.init_root::<metadata_capnp::rootfs::Builder<'_>>();
 
     rootfs.fill_capnp(&mut capnp_rootfs)?;
-
-    let mut buf = Vec::new();
-    ::capnp::serialize::write_message(&mut buf, &message)?;
-    Ok(buf)
-}
-
-fn serialize_metadata(inodes: Vec<Inode>) -> Result<Vec<u8>> {
-    let mut message = ::capnp::message::Builder::new_default();
-    let capnp_inode_vector = message.init_root::<metadata_capnp::inode_vector::Builder<'_>>();
-    let inodes_len = inodes.len().try_into()?;
-
-    let mut capnp_inodes = capnp_inode_vector.init_inodes(inodes_len);
-
-    for (i, inode) in inodes.iter().enumerate() {
-        // we already checked that the length of pfs_inodes fits inside a u32
-        let mut capnp_inode = capnp_inodes.reborrow().get(i as u32);
-        inode.fill_capnp(&mut capnp_inode)?;
-    }
 
     let mut buf = Vec::new();
     ::capnp::serialize::write_message(&mut buf, &message)?;
@@ -183,7 +164,7 @@ fn build_delta<C: Compression + Any>(
     oci: &Image,
     mut existing: Option<PuzzleFS>,
     verity_data: &mut VerityData,
-) -> Result<Descriptor> {
+) -> Result<Vec<Inode>> {
     let mut dirs = HashMap::<u64, Dir>::new();
     let mut files = Vec::<File>::new();
     let mut others = Vec::<Other>::new();
@@ -405,13 +386,7 @@ fn build_delta<C: Compression + Any>(
 
     pfs_inodes.sort_by(|a, b| a.ino.cmp(&b.ino));
 
-    let md_buf = serialize_metadata(pfs_inodes)?;
-
-    let (desc, ..) = oci.put_blob::<Noop, media_types::Inodes>(md_buf.as_slice())?;
-    let verity_hash = get_fs_verity_digest(md_buf.as_slice())?;
-    verity_data.insert(desc.digest.underlying(), verity_hash);
-
-    Ok(desc)
+    Ok(pfs_inodes)
 }
 
 pub fn build_initial_rootfs<C: Compression + Any>(
@@ -419,16 +394,10 @@ pub fn build_initial_rootfs<C: Compression + Any>(
     oci: &Image,
 ) -> Result<Descriptor> {
     let mut verity_data: VerityData = BTreeMap::new();
-    let desc = build_delta::<C>(rootfs, oci, None, &mut verity_data)?;
-    let metadatas = [BlobRef {
-        offset: 0,
-        digest: desc.digest.underlying(),
-        compressed: false,
-    }]
-    .to_vec();
+    let inodes = build_delta::<C>(rootfs, oci, None, &mut verity_data)?;
 
-    let rootfs_buf = serialize_manifest(Rootfs {
-        metadatas,
+    let rootfs_buf = serialize_metadata(Rootfs {
+        metadatas: vec![inodes],
         fs_verity_data: verity_data,
         manifest_version: PUZZLEFS_IMAGE_MANIFEST_VERSION,
     })?;
@@ -448,21 +417,16 @@ pub fn add_rootfs_delta<C: Compression + Any>(
     let mut verity_data: VerityData = BTreeMap::new();
     let pfs = PuzzleFS::open(oci, tag, None)?;
     let oci = Arc::clone(&pfs.oci);
-    let mut rootfs = oci.open_rootfs_blob::<Noop>(tag, None)?;
+    let mut rootfs = Rootfs::try_from(oci.open_rootfs_blob(tag, None)?)?;
 
-    let desc = build_delta::<C>(rootfs_path, &oci, Some(pfs), &mut verity_data)?;
-    let br = BlobRef {
-        digest: desc.digest.underlying(),
-        offset: 0,
-        compressed: false,
-    };
+    let inodes = build_delta::<C>(rootfs_path, &oci, Some(pfs), &mut verity_data)?;
 
-    if !rootfs.metadatas.iter().any(|&x| x == br) {
-        rootfs.metadatas.insert(0, br);
+    if !rootfs.metadatas.iter().any(|x| *x == inodes) {
+        rootfs.metadatas.insert(0, inodes);
     }
 
     rootfs.fs_verity_data.extend(verity_data);
-    let rootfs_buf = serialize_manifest(rootfs)?;
+    let rootfs_buf = serialize_metadata(rootfs)?;
     Ok((
         oci.put_blob::<Noop, media_types::Rootfs>(rootfs_buf.as_slice())?
             .0,
@@ -488,9 +452,9 @@ pub fn enable_fs_verity(oci: Image, tag: &str, manifest_root_hash: &str) -> Resu
 
     let pfs = PuzzleFS::open(oci, tag, None)?;
     let oci = Arc::clone(&pfs.oci);
-    let rootfs = oci.open_rootfs_blob::<Noop>(tag, None)?;
+    let rootfs = oci.open_rootfs_blob(tag, None)?;
 
-    for (content_addressed_file, verity_hash) in rootfs.fs_verity_data {
+    for (content_addressed_file, verity_hash) in rootfs.get_verity_data()? {
         let file_path = oci
             .blob_path()
             .join(Digest::new(&content_addressed_file).to_string());
@@ -521,8 +485,6 @@ pub fn build_test_fs(path: &Path, image: &Image) -> Result<Descriptor> {
 pub mod tests {
     use super::*;
 
-    use std::backtrace::Backtrace;
-
     use tempfile::tempdir;
 
     use crate::reader::WalkPuzzleFS;
@@ -541,12 +503,8 @@ pub mod tests {
         let dir = tempdir().unwrap();
         let image = Image::new(dir.path()).unwrap();
         let rootfs_desc = build_test_fs(Path::new("src/builder/test/test-1"), &image).unwrap();
-        let rootfs = Rootfs::open(
-            image
-                .open_compressed_blob::<Noop>(&rootfs_desc.digest, None)
-                .unwrap(),
-        )
-        .unwrap();
+        image.add_tag("test-tag", rootfs_desc)?;
+        let rootfs = image.open_rootfs_blob("test-tag", None).unwrap();
 
         // there should be a blob that matches the hash of the test data, since it all gets input
         // as one chunk and there's only one file
@@ -563,16 +521,11 @@ pub mod tests {
             )
             .unwrap();
 
-        let metadata_digest = rootfs.metadatas[0].try_into().unwrap();
-        let blob = image.open_metadata_blob(&metadata_digest, None).unwrap();
         let mut inodes = Vec::new();
 
         // we can at least deserialize inodes and they look sane
         for i in 0..2 {
-            inodes.push(Inode::from_capnp(
-                blob.find_inode((i + 1).try_into()?)?
-                    .ok_or(WireFormatError::InvalidSerializedData(Backtrace::capture()))?,
-            )?);
+            inodes.push(rootfs.find_inode(i + 1)?);
         }
 
         assert_eq!(inodes[0].ino, 1);
@@ -620,7 +573,7 @@ pub mod tests {
         let (desc, image) = add_rootfs_delta::<DefaultCompression>(&delta_dir, image, tag).unwrap();
         let new_tag = "test2";
         image.add_tag(new_tag, desc).unwrap();
-        let delta = image.open_rootfs_blob::<Noop>(new_tag, None).unwrap();
+        let delta = Rootfs::try_from(image.open_rootfs_blob(new_tag, None).unwrap()).unwrap();
         assert_eq!(delta.metadatas.len(), 2);
 
         let image = Image::new(dir.path()).unwrap();

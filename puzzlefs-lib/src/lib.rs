@@ -15,7 +15,3 @@ pub mod reader;
 pub mod metadata_capnp {
     include!(concat!(env!("OUT_DIR"), "/metadata_capnp.rs"));
 }
-
-pub mod manifest_capnp {
-    include!(concat!(env!("OUT_DIR"), "/manifest_capnp.rs"));
-}
