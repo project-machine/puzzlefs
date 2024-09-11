@@ -126,7 +126,7 @@ fn test_fs_verity() -> anyhow::Result<()> {
     assert!(mount_output
         .unwrap_err()
         .to_string()
-        .contains("Error: fs error: invalid fs_verity data: fsverity mismatch"));
+        .contains("invalid fs_verity data: fsverity mismatch"));
 
     // test that we can mount with the right digest
     puzzlefs([

@@ -272,80 +272,127 @@ Otherwise, run `fusermount -u /tmp/mounted-image`. You will need to have `fuse` 
 ### Inspecting a puzzlefs image
 ```
 $ cd /tmp/puzzlefs-image
-$ cat index.json | jq .
+$ cat index.json | jq
 {
-  "schemaVersion": -1,
   "manifests": [
     {
-      "digest": "sha256:0efa2a4b490abb02a5b9b5f2d43c8262643dba48c67f14b236df0a6f1ea745d8",
-      "size": 272,
-      "media_type": "application/vnd.puzzlefs.image.rootfs.v1",
       "annotations": {
         "org.opencontainers.image.ref.name": "puzzlefs_example"
-      }
+      },
+      "digest": "sha256:c9106994f5e18833e45164e2028431e9c822b4697172f8a997a0d9a3b0d26c9e",
+      "mediaType": "application/vnd.oci.image.manifest.v1+json",
+      "platform": {
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      "size": 619
     }
   ],
-  "annotations": {}
+  "schemaVersion": 2
 }
 ```
-The `digest` specifies the puzzlefs image manifest, which needs to be decoded using the `capnp tool` and the manifest schema
-(assuming you've cloned puzzlefs in `~/puzzlefs`):
-```
-$ capnp convert binary:json ~/puzzlefs/format/manifest.capnp Rootfs < blobs/sha256/0efa2a4b490abb02a5b9b5f2d43c8262643dba48c67f14b236df0a6f1ea745d8
+`index.json` follows the [OCI Image Index Specification](https://github.com/opencontainers/image-spec/blob/main/image-index.md).
 
-{ "metadatas": [{ "digest": [102, 197, 227, 96, 136, 156, 147, 144, 139, 154, 248, 228, 29, 161, 252, 228, 118, 222, 21, 44, 132, 0, 214, 164, 80, 74, 121, 156, 26, 85, 123, 57],
-    "offset": "0",
-    "compressed": false }],
-  "fsVerityData": [
-    { "digest": [102, 197, 227, 96, 136, 156, 147, 144, 139, 154, 248, 228, 29, 161, 252, 228, 118, 222, 21, 44, 132, 0, 214, 164, 80, 74, 121, 156, 26, 85, 123, 57],
-      "verity": [224, 180, 63, 193, 142, 198, 24, 175, 78, 42, 126, 227, 253, 187, 102, 162, 31, 77, 85, 252, 205, 137, 198, 216, 26, 213, 113, 238, 144, 79, 93, 244] },
-    { "digest": [239, 32, 68, 39, 210, 105, 37, 83, 131, 158, 224, 24, 162, 25, 96, 90, 140, 95, 158, 194, 97, 2, 153, 175, 54, 197, 216, 193, 115, 121, 62, 22],
-      "verity": [196, 54, 71, 79, 3, 104, 3, 253, 163, 243, 85, 213, 67, 235, 144, 210, 20, 206, 160, 209, 75, 164, 93, 22, 79, 84, 41, 119, 20, 84, 64, 164] } ],
-  "manifestVersion": "1" }
-```
-`metadatas` contains a list of layers (in this case only one) which can be further decoded (the sha of the blob is obtained by a decimal to hexadecimal conversion):
-```
-$ capnp convert binary:json ~/puzzlefs/format/metadata.capnp InodeVector < blobs/sha256/66c5e360889c93908b9af8e41da1fce476de152c8400d6a4504a799c1a557b39
+The digest tagged with the `puzzlefs_example` tag is an [OCI Image
+Manifest](https://github.com/opencontainers/image-spec/blob/main/manifest.md)
+with the caveat that `layers` are not applied in the usual way (i.e. by
+stacking each one on top of one another). See below for details about the
+PuzzleFS `layer` descriptors.
 
-{"inodes": [
-  { "ino": "1",
-    "mode": {"dir": {
-      "entries": [
-        { "ino": "2",
-          "name": [97, 108, 103, 111, 114, 105, 116, 104, 109, 115] },
-        { "ino": "3",
-          "name": [108, 111, 114, 101, 109, 95, 105, 112, 115, 117, 109, 46, 116, 120, 116] } ],
-      "lookBelow": false }},
-    "uid": 1000,
-    "gid": 1000,
-    "permissions": 493 },
-  { "ino": "2",
-    "mode": {"dir": {
-      "entries": [{ "ino": "4",
-        "name": [98, 105, 110, 97, 114, 121, 45, 115, 101, 97, 114, 99, 104, 46, 116, 120, 116] }],
-      "lookBelow": false }},
-    "uid": 1000,
-    "gid": 1000,
-    "permissions": 493 },
-  { "ino": "3",
-    "mode": {"file": {"chunks": [{ "blob": {
-        "digest": [239, 32, 68, 39, 210, 105, 37, 83, 131, 158, 224, 24, 162, 25, 96, 90, 140, 95, 158, 194, 97, 2, 153, 175, 54, 197, 216, 193, 115, 121, 62, 22],
-        "offset": "0",
-        "compressed": false },
-      "len": "865" }]}},
-    "uid": 1000,
-    "gid": 1000,
-    "permissions": 420 },
-  { "ino": "4",
-    "mode": {"file": {"chunks": [{ "blob": {
-        "digest": [239, 32, 68, 39, 210, 105, 37, 83, 131, 158, 224, 24, 162, 25, 96, 90, 140, 95, 158, 194, 97, 2, 153, 175, 54, 197, 216, 193, 115, 121, 62, 22],
-        "offset": "865",
-        "compressed": false },
-      "len": "278" }]}},
-    "uid": 1000,
-    "gid": 1000,
-    "permissions": 420 } ]}
+The Image Manifest looks like this:
 ```
+$ cat blobs/sha256/c9106994f5e18833e45164e2028431e9c822b4697172f8a997a0d9a3b0d26c9e | jq
+{
+  "config": {
+    "data": "e30=",
+    "digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "mediaType": "application/vnd.oci.empty.v1+json",
+    "size": 2
+  },
+  "layers": [
+    {
+      "digest": "sha256:b7f1ee9373416a49835747455ec4d287bcccc5a4bf8c38156483d46b35ce4dbd",
+      "mediaType": "application/vnd.puzzlefs.image.filedata.v1",
+      "size": 27
+    },
+    {
+      "annotations": {
+        "io.puzzlefsoci.puzzlefs.puzzlefs_verity_root_hash": "7b22d0210c16134159be75d8239d100817b451591d39af2031d94ae84ac4f8c7"
+      },
+      "digest": "sha256:9e2edc6917b65606b1112ac8663665dfd2d945cfea960ca595accf790922b910",
+      "mediaType": "application/vnd.puzzlefs.image.rootfs.v1",
+      "size": 552
+    }
+  ],
+  "schemaVersion": 2
+}
+```
+
+There are two types of layer descriptors:
+* `application/vnd.puzzlefs.image.rootfs.v1`: the PuzzleFS image rootfs which
+  contains metadata in Capnproto format and must appear only once in the
+  `layers` array
+* `application/vnd.puzzlefs.image.filedata.v1`: a PuzzleFS data chunk generated
+  by the FastCDC algorithm; usually there are multiple chunks in an image and
+  they contain all the filesystem data
+
+There is no extraction step for these layers, PuzzleFS mounts the filesystem by
+reading the PuzzleFS image rootfs and using this metadata to combine the data
+chunks back into the original files. In fact, the data chunks are part of the
+OCI Image Manifest so that the other tools copy the image correctly. For
+example, with skopeo:
+```
+$ skopeo --version
+skopeo version 1.15.2
+$ skopeo copy oci:/tmp/puzzlefs-image:puzzlefs_example oci:/tmp/copy-puzzlefs-image:puzzlefs_example
+```
+The information about the data chunks is also stored in the PuzzleFS image rootfs,
+so that PuzzleFS could mount the filesystem efficiently and that the PuzzleFS
+image could also be decoded in the kernel.
+
+The `digest` of the PuzzleFS iamge rootfs contains the filesystem metadata and
+it can be decoded using the `capnp tool` and the capnp metadata schema (the
+following snippet assumes that you've cloned puzzlefs in `~/puzzlefs`):
+```
+$ capnp convert binary:json ~/puzzlefs/puzzlefs-lib/src/format/metadata.capnp Rootfs < blobs/sha256/9e2edc6917b65606b1112ac8663665dfd2d945cfea960ca595accf790922b910
+{ "metadatas": [{"inodes": [
+    { "ino": "1",
+      "mode": {"dir": {
+        "entries": [
+          { "ino": "2",
+            "name": [97, 108, 103, 111, 114, 105, 116, 104, 109, 115] },
+          { "ino": "3",
+            "name": [108, 111, 114, 101, 109, 95, 105, 112, 115, 117, 109, 46, 116, 120, 116] } ],
+        "lookBelow": false }},
+      "uid": 1000,
+      "gid": 1000,
+      "permissions": 493 },
+    { "ino": "2",
+      "mode": {"dir": {
+        "entries": [{ "ino": "4",
+          "name": [98, 105, 110, 97, 114, 121, 45, 115, 101, 97, 114, 99, 104, 46, 116, 120, 116] }],
+        "lookBelow": false }},
+      "uid": 1000,
+      "gid": 1000,
+      "permissions": 509 },
+    { "ino": "3",
+      "mode": {"file": [{ "blob": {
+          "digest": [183, 241, 238, 147, 115, 65, 106, 73, 131, 87, 71, 69, 94, 196, 210, 135, 188, 204, 197, 164, 191, 140, 56, 21, 100, 131, 212, 107, 53, 206, 77, 189],
+          "offset": "0",
+          "compressed": false },
+        "len": "27" }]},
+      "uid": 1000,
+      "gid": 1000,
+      "permissions": 436 },
+    {"ino": "4", "mode": {"file": []}, "uid": 1000, "gid": 1000, "permissions": 436} ]}],
+  "fsVerityData": [{ "digest": [183, 241, 238, 147, 115, 65, 106, 73, 131, 87, 71, 69, 94, 196, 210, 135, 188, 204, 197, 164, 191, 140, 56, 21, 100, 131, 212, 107, 53, 206, 77, 189],
+    "verity": [91, 20, 52, 173, 44, 8, 31, 244, 53, 178, 16, 121, 46, 144, 14, 39, 2, 30, 196, 43, 104, 230, 143, 98, 219, 173, 82, 223, 224, 201, 247, 164] }],
+  "manifestVersion": "3" }
+```
+
+`metadatas` contains a list of PuzzleFS layers, each layer consisting of a
+vector of Inodes. See the [capnp
+schema](./puzzlefs-lib/src/format/metadata.capnp) for details.
 
 ## Implementation
 

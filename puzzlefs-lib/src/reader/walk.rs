@@ -86,8 +86,7 @@ mod tests {
         // make ourselves a test image
         let oci_dir = tempdir().unwrap();
         let image = Image::new(oci_dir.path()).unwrap();
-        let rootfs_desc = build_test_fs(Path::new("src/builder/test/test-1"), &image).unwrap();
-        image.add_tag("test", rootfs_desc).unwrap();
+        build_test_fs(Path::new("src/builder/test/test-1"), &image, "test").unwrap();
         let mut pfs = PuzzleFS::open(image, "test", None).unwrap();
 
         let mut walker = WalkPuzzleFS::walk(&mut pfs).unwrap();
@@ -125,9 +124,8 @@ mod tests {
             xattr::set(f, "user.meshuggah", b"rocks").unwrap();
         }
 
-        let rootfs_desc = build_test_fs(&rootfs, &image).unwrap();
+        build_test_fs(&rootfs, &image, "test").unwrap();
 
-        image.add_tag("test", rootfs_desc).unwrap();
         let mut pfs = PuzzleFS::open(image, "test", None).unwrap();
 
         let mut walker = WalkPuzzleFS::walk(&mut pfs).unwrap();
