@@ -121,7 +121,16 @@ impl Image {
         } else {
             self.0.dir.write(&path, final_data)?;
         }
-        image_manifest.layers_mut().push(descriptor.clone());
+
+        // Let's make the PuzzleFS image rootfs the first layer so it's easy to find
+        // The LXC oci template also looks at the first layer in the array to identify the image
+        // type (see getlayermediatype):
+        // https://github.com/lxc/lxc/commit/1a2da75b6e8431f3530ebd3f75442d3bd5eec5e2
+        if media_type.name() == PUZZLEFS_ROOTFS {
+            image_manifest.layers_mut().insert(0, descriptor.clone());
+        } else {
+            image_manifest.layers_mut().push(descriptor.clone());
+        }
         Ok((descriptor, fs_verity_digest, compressed_blob))
     }
 
