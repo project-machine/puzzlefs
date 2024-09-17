@@ -6,85 +6,56 @@ use std::io;
 use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
 use sha2::{Digest as Sha2Digest, Sha256};
-use tempfile::NamedTempFile;
 
 use crate::compression::{Compression, Decompressor, Noop, Zstd};
 use crate::format::{Result, RootfsReader, VerityData, WireFormatError, SHA256_BLOCK_SIZE};
-use openat::Dir;
 use std::io::{Error, ErrorKind};
 
-mod descriptor;
-pub use descriptor::{Descriptor, Digest};
+pub use crate::format::Digest;
+use crate::oci::media_types::{PuzzleFSMediaType, PUZZLEFS_ROOTFS, VERITY_ROOT_HASH_ANNOTATION};
+use ocidir::oci_spec::image;
+pub use ocidir::oci_spec::image::Descriptor;
+use ocidir::oci_spec::image::{
+    DescriptorBuilder, ImageIndex, ImageManifest, ImageManifestBuilder, MediaType, Sha256Digest,
+};
+use ocidir::oci_spec::OciSpecError;
+use ocidir::OciDir;
+use std::collections::HashMap;
+use std::str::FromStr;
 
-mod index;
-pub use index::Index;
 use std::io::Cursor;
-use std::io::Write;
 
 pub mod media_types;
+const OCI_TAG_ANNOTATION: &str = "org.opencontainers.image.ref.name";
 
-// this is a string, probably intended to be a real version format (though the spec doesn't say
-// anything) so let's just say "puzzlefs-dev" for now since the format is in flux.
-const PUZZLEFS_IMAGE_LAYOUT_VERSION: &str = "puzzlefs-dev";
-
-const IMAGE_LAYOUT_PATH: &str = "oci-layout";
-
-#[derive(Serialize, Deserialize, Debug)]
-struct OCILayout {
-    #[serde(rename = "imageLayoutVersion")]
-    version: String,
-}
-
-pub struct Image {
-    oci_dir: PathBuf,
-    oci_dir_fd: Dir,
-}
+pub struct Image(pub OciDir);
 
 impl Image {
     pub fn new(oci_dir: &Path) -> Result<Self> {
         fs::create_dir_all(oci_dir)?;
-        let image = Image {
-            oci_dir: oci_dir.to_path_buf(),
-            oci_dir_fd: Dir::open(oci_dir)?,
-        };
-        fs::create_dir_all(image.blob_path())?;
-        let layout_file = fs::File::create(oci_dir.join(IMAGE_LAYOUT_PATH))?;
-        let layout = OCILayout {
-            version: PUZZLEFS_IMAGE_LAYOUT_VERSION.to_string(),
-        };
-        serde_json::to_writer(layout_file, &layout)?;
-        Ok(image)
+        let d = cap_std::fs::Dir::open_ambient_dir(oci_dir, cap_std::ambient_authority())?;
+        let oci_dir = OciDir::ensure(&d)?;
+
+        Ok(Self(oci_dir))
     }
 
     pub fn open(oci_dir: &Path) -> Result<Self> {
-        let layout_file = fs::File::open(oci_dir.join(IMAGE_LAYOUT_PATH))?;
-        let layout = serde_json::from_reader::<_, OCILayout>(layout_file)?;
-        if layout.version != PUZZLEFS_IMAGE_LAYOUT_VERSION {
-            Err(WireFormatError::InvalidImageVersion(
-                layout.version,
-                Backtrace::capture(),
-            ))
-        } else {
-            Ok(Image {
-                oci_dir: oci_dir.to_path_buf(),
-                oci_dir_fd: Dir::open(oci_dir)?,
-            })
-        }
+        let d = cap_std::fs::Dir::open_ambient_dir(oci_dir, cap_std::ambient_authority())?;
+        let oci_dir = OciDir::open(&d)?;
+        Ok(Self(oci_dir))
     }
 
     pub fn blob_path(&self) -> PathBuf {
-        self.oci_dir.join("blobs/sha256")
-    }
-
-    pub fn blob_path_relative(&self) -> PathBuf {
+        // TODO: use BLOBDIR constant from ocidir after making it public
         PathBuf::from("blobs/sha256")
     }
 
-    pub fn put_blob<C: Compression + Any, MT: media_types::MediaType>(
+    pub fn put_blob<C: Compression + Any>(
         &self,
         buf: &[u8],
+        image_manifest: &mut ImageManifest,
+        media_type: impl PuzzleFSMediaType,
     ) -> Result<(Descriptor, [u8; SHA256_BLOCK_SIZE], bool)> {
         let mut compressed_data = Cursor::new(Vec::<u8>::new());
         let mut compressed = C::compress(&mut compressed_data)?;
@@ -111,15 +82,32 @@ impl Image {
 
         hasher.update(final_data);
         let digest = hasher.finalize();
-        let media_type = C::append_extension(MT::name());
-        let descriptor = Descriptor::new(digest.into(), uncompressed_size, media_type);
+        let media_type_with_extension = C::append_extension(media_type.name());
+        let mut digest_string = "sha256:".to_string();
+        digest_string.push_str(&hex::encode(digest.as_slice()));
+
         let fs_verity_digest = get_fs_verity_digest(&compressed_data.get_ref()[..])?;
-        let path = self.blob_path().join(descriptor.digest.to_string());
+        let mut descriptor = Descriptor::new(
+            MediaType::Other(media_type_with_extension),
+            uncompressed_size,
+            image::Digest::from_str(&digest_string)?,
+        );
+        // We need to store the PuzzleFS Rootfs verity digest as an annotation (obviously we cannot
+        // store it in the Rootfs itself)
+        if media_type.name() == PUZZLEFS_ROOTFS {
+            let mut annotations = HashMap::new();
+            annotations.insert(
+                VERITY_ROOT_HASH_ANNOTATION.to_string(),
+                hex::encode(fs_verity_digest),
+            );
+            descriptor.set_annotations(Some(annotations));
+        }
+        let path = self.blob_path().join(descriptor.digest().digest());
 
         // avoid replacing the data blob so we don't drop fsverity data
-        if path.exists() {
+        if self.0.dir.exists(&path) {
             let mut hasher = Sha256::new();
-            let mut file = fs::File::open(path)?;
+            let mut file = self.0.dir.open(&path)?;
             io::copy(&mut file, &mut hasher)?;
             let existing_digest = hasher.finalize();
             if existing_digest != digest {
@@ -131,17 +119,14 @@ impl Image {
                 .into());
             }
         } else {
-            let mut tmp = NamedTempFile::new_in(&self.oci_dir)?;
-            tmp.write_all(final_data)?;
-            tmp.persist(path).map_err(|e| e.error)?;
+            self.0.dir.write(&path, final_data)?;
         }
+        image_manifest.layers_mut().push(descriptor.clone());
         Ok((descriptor, fs_verity_digest, compressed_blob))
     }
 
-    fn open_raw_blob(&self, digest: &Digest, verity: Option<&[u8]>) -> io::Result<fs::File> {
-        let file = self
-            .oci_dir_fd
-            .open_file(&self.blob_path_relative().join(digest.to_string()))?;
+    fn open_raw_blob(&self, digest: &str, verity: Option<&[u8]>) -> io::Result<cap_std::fs::File> {
+        let file = self.0.dir.open(self.blob_path().join(digest))?;
         if let Some(verity) = verity {
             check_fs_verity(&file, verity).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
         }
@@ -153,27 +138,94 @@ impl Image {
         digest: &Digest,
         verity: Option<&[u8]>,
     ) -> io::Result<Box<dyn Decompressor>> {
-        let f = self.open_raw_blob(digest, verity)?;
+        let f = self.open_raw_blob(&digest.to_string(), verity)?;
         C::decompress(f)
     }
 
-    pub fn get_image_manifest_fd(&self, tag: &str) -> Result<fs::File> {
+    pub fn get_pfs_rootfs_verity(&self, tag: &str) -> Result<[u8; SHA256_BLOCK_SIZE]> {
+        let manifest = self.0.find_manifest_with_tag(tag)?.ok_or_else(|| {
+            WireFormatError::MissingManifest(tag.to_string(), Backtrace::capture())
+        })?;
+
+        let rootfs_desc = manifest
+            .layers()
+            .iter()
+            .find(|desc| desc.media_type() == &MediaType::Other(PUZZLEFS_ROOTFS.to_string()))
+            .ok_or_else(|| WireFormatError::MissingRootfs(Backtrace::capture()))?;
+
+        let rootfs_verity = rootfs_desc
+            .annotations()
+            .as_ref()
+            .ok_or_else(|| {
+                WireFormatError::InvalidFsVerityData(
+                    "missing rootfs annotations".to_string(),
+                    Backtrace::capture(),
+                )
+            })?
+            .get(VERITY_ROOT_HASH_ANNOTATION)
+            .ok_or_else(|| {
+                WireFormatError::InvalidFsVerityData(
+                    "missing rootfs verity annotation".to_string(),
+                    Backtrace::capture(),
+                )
+            })?;
+        let mut verity_digest: [u8; SHA256_BLOCK_SIZE] = [0; SHA256_BLOCK_SIZE];
+        hex::decode_to_slice(rootfs_verity, &mut verity_digest)?;
+
+        Ok(verity_digest)
+    }
+
+    pub fn get_pfs_rootfs(&self, tag: &str, verity: Option<&[u8]>) -> Result<cap_std::fs::File> {
+        let manifest = self.0.find_manifest_with_tag(tag)?.ok_or_else(|| {
+            WireFormatError::MissingManifest(tag.to_string(), Backtrace::capture())
+        })?;
+
+        let rootfs_desc = manifest
+            .layers()
+            .iter()
+            .find(|desc| desc.media_type() == &MediaType::Other(PUZZLEFS_ROOTFS.to_string()))
+            .ok_or_else(|| WireFormatError::MissingRootfs(Backtrace::capture()))?;
+
+        let rootfs_digest = rootfs_desc.digest().digest();
+        let file = self.open_raw_blob(rootfs_digest, verity)?;
+        Ok(file)
+    }
+
+    // TODO: export this function from ocidr / find another way to avoid code duplication
+    fn descriptor_is_tagged(d: &Descriptor, tag: &str) -> bool {
+        d.annotations()
+            .as_ref()
+            .and_then(|annos| annos.get(OCI_TAG_ANNOTATION))
+            .filter(|tagval| tagval.as_str() == tag)
+            .is_some()
+    }
+
+    pub fn get_image_manifest_fd(&self, tag: &str) -> Result<cap_std::fs::File> {
         let index = self.get_index()?;
-        let desc = index
-            .find_tag(tag)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("no tag {tag}")))?;
-        let file = self.open_raw_blob(&desc.digest, None)?;
+        let image_manifest = index
+            .manifests()
+            .iter()
+            .find(|desc| Self::descriptor_is_tagged(desc, tag))
+            .ok_or_else(|| {
+                WireFormatError::MissingManifest(tag.to_string(), Backtrace::capture())
+            })?;
+        let file = self.open_raw_blob(image_manifest.digest().digest(), None)?;
         Ok(file)
     }
 
     pub fn open_rootfs_blob(&self, tag: &str, verity: Option<&[u8]>) -> Result<RootfsReader> {
-        let index = self.get_index()?;
-        let desc = index
-            .find_tag(tag)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("no tag {tag}")))?;
+        let temp_verity;
+        let rootfs_verity = if let Some(verity) = verity {
+            let manifest = self.get_image_manifest_fd(tag)?;
+            check_fs_verity(&manifest, verity)?;
+            temp_verity = self.get_pfs_rootfs_verity(tag)?;
+            Some(&temp_verity[..])
+        } else {
+            None
+        };
 
-        let rootfs = self.open_raw_blob(&desc.digest, verity)?;
-        RootfsReader::open(rootfs)
+        let rootfs_file = self.get_pfs_rootfs(tag, rootfs_verity)?;
+        RootfsReader::open(rootfs_file)
     }
 
     pub fn fill_from_chunk(
@@ -207,92 +259,115 @@ impl Image {
         Ok(n)
     }
 
-    pub fn get_index(&self) -> Result<Index> {
-        Index::open(&self.oci_dir.join(index::PATH))
+    pub fn get_index(&self) -> Result<ImageIndex> {
+        Ok(self
+            .0
+            .read_index()?
+            .ok_or_else(|| OciSpecError::Other("missing OCI index".to_string()))?)
     }
 
-    pub fn put_index(&self, i: &Index) -> Result<()> {
-        i.write(&self.oci_dir.join(index::PATH))
-    }
-
-    pub fn add_tag(&self, name: &str, mut desc: Descriptor) -> Result<()> {
-        // check that the blob exists...
-        self.open_raw_blob(&desc.digest, None)?;
-
-        let mut index = self.get_index().unwrap_or_default();
-
-        // untag anything that has this tag
-        for m in index.manifests.iter_mut() {
-            if m.get_name()
-                .map(|existing_tag| existing_tag == name)
-                .unwrap_or(false)
-            {
-                m.remove_name()
-            }
-        }
-        desc.set_name(name);
-
-        index.manifests.push(desc);
-        self.put_index(&index)
+    pub fn get_empty_manifest() -> Result<ImageManifest> {
+        // see https://github.com/opencontainers/image-spec/blob/main/manifest.md#guidance-for-an-empty-descriptor
+        // TODO: write the empty blob to blobs/sha256, otherwise skopeo won't be able to copy the image
+        // the fs verity test will also need changes because currently it makes sure that verity is
+        // enabled for every blob in blobs/sha256; one thing we could do is enable verity but skip
+        // checking if the digests match or add the verity annotations for each descriptor; another
+        // way is to only check the verity data for the PuzzleFS rootfs and file chunks
+        let config = DescriptorBuilder::default()
+            .media_type(MediaType::EmptyJSON)
+            .size(2_u32)
+            .digest(Sha256Digest::from_str(
+                "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            )?)
+            .data("e30=")
+            .build()?;
+        let image_manifest = ImageManifestBuilder::default()
+            .schema_version(2_u32)
+            .config(config)
+            .layers(Vec::new())
+            .build()?;
+        Ok(image_manifest)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ocidir::oci_spec::image::{ImageIndexBuilder, Platform, ANNOTATION_REF_NAME};
+    use std::collections::HashMap;
     use tempfile::tempdir;
     type DefaultCompression = Zstd;
 
     #[test]
-    fn test_put_blob_correct_hash() {
-        let dir = tempdir().unwrap();
-        let image: Image = Image::new(dir.path()).unwrap();
-        let (desc, ..) = image
-            .put_blob::<Noop, media_types::Chunk>("meshuggah rocks".as_bytes())
-            .unwrap();
+    fn test_put_blob_correct_hash() -> anyhow::Result<()> {
+        let dir = tempdir()?;
+        let mut image_manifest = Image::get_empty_manifest()?;
+        let image: Image = Image::new(dir.path())?;
+        let (desc, ..) = image.put_blob::<Noop>(
+            "meshuggah rocks".as_bytes(),
+            &mut image_manifest,
+            media_types::Chunk {},
+        )?;
 
         const DIGEST: &str = "3abd5ce0f91f640d88dca1f26b37037b02415927cacec9626d87668a715ec12d";
-        assert_eq!(desc.digest.to_string(), DIGEST);
+        assert_eq!(desc.digest().digest(), DIGEST);
 
-        let md = fs::symlink_metadata(image.blob_path().join(DIGEST)).unwrap();
+        let md = image
+            .0
+            .dir
+            .symlink_metadata(image.blob_path().join(DIGEST))?;
         assert!(md.is_file());
+        Ok(())
     }
 
     #[test]
-    fn test_open_can_open_new_image() {
-        let dir = tempdir().unwrap();
-        Image::new(dir.path()).unwrap();
-        Image::open(dir.path()).unwrap();
+    fn test_open_can_open_new_image() -> anyhow::Result<()> {
+        let dir = tempdir()?;
+        Image::new(dir.path())?;
+        Image::open(dir.path())?;
+        Ok(())
     }
 
     #[test]
-    fn test_put_get_index() {
-        let dir = tempdir().unwrap();
-        let image = Image::new(dir.path()).unwrap();
-        let (mut desc, ..) = image
-            .put_blob::<DefaultCompression, media_types::Chunk>("meshuggah rocks".as_bytes())
-            .unwrap();
-        desc.set_name("foo");
-        let mut index = Index::default();
-        // TODO: make a real API for this that checks that descriptor has a name?
-        index.manifests.push(desc);
-        image.put_index(&index).unwrap();
+    fn test_put_get_index() -> anyhow::Result<()> {
+        let dir = tempdir()?;
+        let image = Image::new(dir.path())?;
+        let mut image_manifest = Image::get_empty_manifest()?;
+        let mut annotations = HashMap::new();
+        annotations.insert(ANNOTATION_REF_NAME.to_string(), "foo".to_string());
+        image_manifest.set_annotations(Some(annotations));
+        let image_manifest_descriptor =
+            image
+                .0
+                .insert_manifest(image_manifest, None, Platform::default())?;
 
-        let image2 = Image::open(dir.path()).unwrap();
-        let index2 = image2.get_index().unwrap();
-        assert_eq!(index.manifests, index2.manifests);
+        let index = ImageIndexBuilder::default()
+            .schema_version(2_u32)
+            .manifests(vec![image_manifest_descriptor])
+            .build()?;
+
+        let image2 = Image::open(dir.path())?;
+        let index2 = image2.get_index()?;
+        assert_eq!(index.manifests(), index2.manifests());
+        Ok(())
     }
 
     #[test]
-    fn double_put_ok() {
-        let dir = tempdir().unwrap();
-        let image = Image::new(dir.path()).unwrap();
-        let desc1 = image
-            .put_blob::<DefaultCompression, media_types::Chunk>("meshuggah rocks".as_bytes())
-            .unwrap();
-        let desc2 = image
-            .put_blob::<DefaultCompression, media_types::Chunk>("meshuggah rocks".as_bytes())
-            .unwrap();
+    fn double_put_ok() -> anyhow::Result<()> {
+        let dir = tempdir()?;
+        let mut image_manifest = Image::get_empty_manifest()?;
+        let image = Image::new(dir.path())?;
+        let desc1 = image.put_blob::<DefaultCompression>(
+            "meshuggah rocks".as_bytes(),
+            &mut image_manifest,
+            media_types::Chunk {},
+        )?;
+        let desc2 = image.put_blob::<DefaultCompression>(
+            "meshuggah rocks".as_bytes(),
+            &mut image_manifest,
+            media_types::Chunk {},
+        )?;
         assert_eq!(desc1, desc2);
+        Ok(())
     }
 }

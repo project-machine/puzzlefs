@@ -1,6 +1,5 @@
 use crate::format::{Result, WireFormatError, SHA256_BLOCK_SIZE};
 use std::backtrace::Backtrace;
-use std::fs;
 use std::io::Write;
 use std::os::unix::io::AsRawFd;
 
@@ -19,7 +18,7 @@ pub fn get_fs_verity_digest(data: &[u8]) -> Result<[u8; SHA256_BLOCK_SIZE]> {
     Ok(result.into())
 }
 
-pub fn check_fs_verity(file: &fs::File, expected: &[u8]) -> Result<()> {
+pub fn check_fs_verity(file: &cap_std::fs::File, expected: &[u8]) -> Result<()> {
     if expected.len() != SHA256_BLOCK_SIZE {
         return Err(WireFormatError::InvalidFsVerityData(
             format!(

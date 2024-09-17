@@ -102,7 +102,7 @@ pub struct RootfsReader {
 }
 
 impl RootfsReader {
-    pub fn open(f: fs::File) -> Result<Self> {
+    pub fn open(f: cap_std::fs::File) -> Result<Self> {
         // We know the loaded message is safe, so we're allowing unlimited reads.
         let unlimited_reads = message::ReaderOptions {
             traversal_limit_in_words: None,

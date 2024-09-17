@@ -157,21 +157,19 @@ fn main() -> anyhow::Result<()> {
             let image = Image::new(oci_dir)?;
             let new_image = match b.base_layer {
                 Some(base_layer) => {
-                    let (desc, image) = if b.compression {
-                        add_rootfs_delta::<Zstd>(rootfs, image, &base_layer)?
+                    let (_desc, image) = if b.compression {
+                        add_rootfs_delta::<Zstd>(rootfs, image, &b.tag, &base_layer)?
                     } else {
-                        add_rootfs_delta::<Noop>(rootfs, image, &base_layer)?
+                        add_rootfs_delta::<Noop>(rootfs, image, &b.tag, &base_layer)?
                     };
-                    image.add_tag(&b.tag, desc)?;
                     image
                 }
                 None => {
-                    let desc = if b.compression {
-                        build_initial_rootfs::<Zstd>(rootfs, &image)?
+                    if b.compression {
+                        build_initial_rootfs::<Zstd>(rootfs, &image, &b.tag)?
                     } else {
-                        build_initial_rootfs::<Noop>(rootfs, &image)?
+                        build_initial_rootfs::<Noop>(rootfs, &image, &b.tag)?
                     };
-                    image.add_tag(&b.tag, desc)?;
                     Arc::new(image)
                 }
             };

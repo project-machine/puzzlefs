@@ -1,23 +1,26 @@
-pub trait MediaType {
-    fn name() -> &'static str;
+pub trait PuzzleFSMediaType {
+    fn name(&self) -> &'static str;
 }
 
-const PUZZLEFS_ROOTFS: &str = "application/vnd.puzzlefs.image.rootfs.v1";
+pub(crate) const PUZZLEFS_ROOTFS: &str = "application/vnd.puzzlefs.image.rootfs.v1";
 
 pub struct Rootfs {}
 
-impl MediaType for Rootfs {
-    fn name() -> &'static str {
+impl PuzzleFSMediaType for Rootfs {
+    fn name(&self) -> &'static str {
         PUZZLEFS_ROOTFS
     }
 }
 
-const PUZZLEFS_CHUNK_DATA: &str = "application/vnd.puzzlefs.image.layer.puzzlefs.v1";
+pub(crate) const PUZZLEFS_CHUNK_DATA: &str = "application/vnd.puzzlefs.image.filedata.v1";
 
 pub struct Chunk {}
 
-impl MediaType for Chunk {
-    fn name() -> &'static str {
+impl PuzzleFSMediaType for Chunk {
+    fn name(&self) -> &'static str {
         PUZZLEFS_CHUNK_DATA
     }
 }
+
+pub(crate) const VERITY_ROOT_HASH_ANNOTATION: &str =
+    "io.puzzlefsoci.puzzlefs.puzzlefs_verity_root_hash";

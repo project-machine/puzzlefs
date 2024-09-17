@@ -187,9 +187,7 @@ mod tests {
             }
         }
 
-        let rootfs_desc = build_test_fs(&rootfs, &image).unwrap();
-
-        image.add_tag("test", rootfs_desc).unwrap();
+        build_test_fs(&rootfs, &image, "test").unwrap();
 
         extract_rootfs(
             oci_dir.to_str().unwrap(),
@@ -238,9 +236,7 @@ mod tests {
 
         std::fs::set_permissions(foo, Permissions::from_mode(TESTED_PERMISSION)).unwrap();
 
-        let rootfs_desc = build_test_fs(&rootfs, &image).unwrap();
-
-        image.add_tag("test", rootfs_desc).unwrap();
+        build_test_fs(&rootfs, &image, "test").unwrap();
 
         extract_rootfs(
             oci_dir.to_str().unwrap(),
@@ -277,9 +273,7 @@ mod tests {
             fs::metadata(&bar).unwrap().ino()
         );
 
-        let rootfs_desc = build_test_fs(&rootfs, &image).unwrap();
-
-        image.add_tag("test", rootfs_desc).unwrap();
+        build_test_fs(&rootfs, &image, "test").unwrap();
 
         extract_rootfs(
             oci_dir.to_str().unwrap(),
@@ -309,8 +303,7 @@ mod tests {
         fs::create_dir_all(&rootfs).unwrap();
         std::fs::File::create(foo).unwrap();
 
-        let rootfs_desc = build_test_fs(&rootfs, &image).unwrap();
-        image.add_tag("test", rootfs_desc).unwrap();
+        build_test_fs(&rootfs, &image, "test").unwrap();
 
         extract_rootfs(
             oci_dir.to_str().unwrap(),

@@ -201,8 +201,7 @@ mod tests {
         // make ourselves a test image
         let oci_dir = tempdir().unwrap();
         let image = Image::new(oci_dir.path()).unwrap();
-        let rootfs_desc = build_test_fs(Path::new("src/builder/test/test-1"), &image).unwrap();
-        image.add_tag("test", rootfs_desc).unwrap();
+        build_test_fs(Path::new("src/builder/test/test-1"), &image, "test").unwrap();
         let pfs = PuzzleFS::open(image, "test", None).unwrap();
 
         let inode = pfs.find_inode(2).unwrap();
@@ -222,8 +221,7 @@ mod tests {
     fn test_path_lookup() {
         let oci_dir = tempdir().unwrap();
         let image = Image::new(oci_dir.path()).unwrap();
-        let rootfs_desc = build_test_fs(Path::new("src/builder/test/test-1"), &image).unwrap();
-        image.add_tag("test", rootfs_desc).unwrap();
+        build_test_fs(Path::new("src/builder/test/test-1"), &image, "test").unwrap();
         let pfs = PuzzleFS::open(image, "test", None).unwrap();
 
         assert_eq!(pfs.lookup(Path::new("/")).unwrap().unwrap().ino, 1);

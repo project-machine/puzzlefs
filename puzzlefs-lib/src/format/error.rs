@@ -11,8 +11,6 @@ pub enum WireFormatError {
     LocalRefError(Backtrace),
     #[error("cannot seek to other blob")]
     SeekOtherError(Backtrace),
-    #[error("no value present")]
-    ValueMissing(Backtrace),
     #[error("invalid serialized data")]
     InvalidSerializedData(Backtrace),
     #[error("invalid image schema: {0}")]
@@ -21,6 +19,10 @@ pub enum WireFormatError {
     InvalidImageVersion(String, Backtrace),
     #[error("invalid fs_verity data: {0}")]
     InvalidFsVerityData(String, Backtrace),
+    #[error("missing manifest: {0}")]
+    MissingManifest(String, Backtrace),
+    #[error("missing PuzzleFS rootfs")]
+    MissingRootfs(Backtrace),
     #[error("fs error: {0}")]
     IOError(#[from] io::Error, Backtrace),
     #[error("deserialization error (capnp): {0}")]
@@ -33,6 +35,10 @@ pub enum WireFormatError {
     FromSliceError(#[from] std::array::TryFromSliceError, Backtrace),
     #[error("hex error: {0}")]
     HexError(#[from] hex::FromHexError, Backtrace),
+    #[error("Oci error: {0}")]
+    OciError(#[from] ocidir::oci_spec::OciSpecError, Backtrace),
+    #[error("Oci dir error: {0}")]
+    OciDirError(#[from] ocidir::Error, Backtrace),
 }
 
 impl WireFormatError {
@@ -40,11 +46,12 @@ impl WireFormatError {
         match self {
             WireFormatError::LocalRefError(..) => Errno::EINVAL as c_int,
             WireFormatError::SeekOtherError(..) => Errno::ESPIPE as c_int,
-            WireFormatError::ValueMissing(..) => Errno::ENOENT as c_int,
             WireFormatError::InvalidSerializedData(..) => Errno::EINVAL as c_int,
             WireFormatError::InvalidImageSchema(..) => Errno::EINVAL as c_int,
             WireFormatError::InvalidImageVersion(..) => Errno::EINVAL as c_int,
             WireFormatError::InvalidFsVerityData(..) => Errno::EINVAL as c_int,
+            WireFormatError::MissingManifest(..) => Errno::EINVAL as c_int,
+            WireFormatError::MissingRootfs(..) => Errno::EINVAL as c_int,
             WireFormatError::IOError(ioe, ..) => {
                 ioe.raw_os_error().unwrap_or(Errno::EINVAL as i32) as c_int
             }
@@ -53,6 +60,8 @@ impl WireFormatError {
             WireFormatError::HexError(..) => Errno::EINVAL as c_int,
             WireFormatError::FromIntError(..) => Errno::EINVAL as c_int,
             WireFormatError::FromSliceError(..) => Errno::EINVAL as c_int,
+            WireFormatError::OciError(..) => Errno::EINVAL as c_int,
+            WireFormatError::OciDirError(..) => Errno::EINVAL as c_int,
         }
     }
 
