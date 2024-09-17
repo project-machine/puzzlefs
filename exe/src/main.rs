@@ -38,7 +38,6 @@ enum SubCommand {
 struct Build {
     rootfs: String,
     oci_dir: String,
-    tag: String,
     #[arg(short, long, value_name = "base-layer")]
     base_layer: Option<String>,
     #[arg(short, long, value_name = "compressed")]
@@ -48,7 +47,6 @@ struct Build {
 #[derive(Args)]
 struct Mount {
     oci_dir: String,
-    tag: String,
     mountpoint: String,
     #[arg(short, long)]
     foreground: bool,
@@ -63,14 +61,12 @@ struct Mount {
 #[derive(Args)]
 struct Extract {
     oci_dir: String,
-    tag: String,
     extract_dir: String,
 }
 
 #[derive(Args)]
 struct FsVerity {
     oci_dir: String,
-    tag: String,
     root_hash: String,
 }
 
@@ -148,32 +144,42 @@ fn mount_background(
     Ok(())
 }
 
+fn parse_oci_dir(oci_dir: &str) -> anyhow::Result<(&str, &str)> {
+    let components: Vec<&str> = oci_dir.split_terminator(":").collect();
+    if components.len() != 2 {
+        anyhow::bail!("Expected oci_dir in the following format <oci_dir>:<tag> ")
+    }
+
+    Ok((components[0], components[1]))
+}
+
 fn main() -> anyhow::Result<()> {
     let opts: Opts = Opts::parse();
     match opts.subcmd {
         SubCommand::Build(b) => {
             let rootfs = Path::new(&b.rootfs);
-            let oci_dir = Path::new(&b.oci_dir);
+            let (oci_dir, tag) = parse_oci_dir(&b.oci_dir)?;
+            let oci_dir = Path::new(oci_dir);
             let image = Image::new(oci_dir)?;
             let new_image = match b.base_layer {
                 Some(base_layer) => {
                     let (_desc, image) = if b.compression {
-                        add_rootfs_delta::<Zstd>(rootfs, image, &b.tag, &base_layer)?
+                        add_rootfs_delta::<Zstd>(rootfs, image, tag, &base_layer)?
                     } else {
-                        add_rootfs_delta::<Noop>(rootfs, image, &b.tag, &base_layer)?
+                        add_rootfs_delta::<Noop>(rootfs, image, tag, &base_layer)?
                     };
                     image
                 }
                 None => {
                     if b.compression {
-                        build_initial_rootfs::<Zstd>(rootfs, &image, &b.tag)?
+                        build_initial_rootfs::<Zstd>(rootfs, &image, tag)?
                     } else {
-                        build_initial_rootfs::<Noop>(rootfs, &image, &b.tag)?
+                        build_initial_rootfs::<Noop>(rootfs, &image, tag)?
                     };
                     Arc::new(image)
                 }
             };
-            let mut manifest_fd = new_image.get_image_manifest_fd(&b.tag)?;
+            let mut manifest_fd = new_image.get_image_manifest_fd(tag)?;
             let mut read_buffer = Vec::new();
             manifest_fd.read_to_end(&mut read_buffer)?;
             let manifest_digest = get_fs_verity_digest(&read_buffer)?;
@@ -191,7 +197,8 @@ fn main() -> anyhow::Result<()> {
                 init_syslog(log_level)?;
             }
 
-            let oci_dir = Path::new(&m.oci_dir);
+            let (oci_dir, tag) = parse_oci_dir(&m.oci_dir)?;
+            let oci_dir = Path::new(oci_dir);
             let oci_dir = fs::canonicalize(oci_dir)?;
             let image = Image::open(&oci_dir)?;
             let mountpoint = Path::new(&m.mountpoint);
@@ -213,7 +220,7 @@ fn main() -> anyhow::Result<()> {
                 let named_pipe = m.init_pipe.map(PathBuf::from);
                 let result = spawn_mount(
                     image,
-                    &m.tag,
+                    tag,
                     &mountpoint,
                     &m.options.unwrap_or_default(),
                     named_pipe.clone().map(PipeDescriptor::NamedPipe),
@@ -244,7 +251,7 @@ fn main() -> anyhow::Result<()> {
 
                 if let Err(e) = mount_background(
                     image,
-                    &m.tag,
+                    tag,
                     &mountpoint,
                     m.options,
                     manifest_verity,
@@ -262,14 +269,16 @@ fn main() -> anyhow::Result<()> {
             Ok(())
         }
         SubCommand::Extract(e) => {
+            let (oci_dir, tag) = parse_oci_dir(&e.oci_dir)?;
             init_logging("info");
-            extract_rootfs(&e.oci_dir, &e.tag, &e.extract_dir)
+            extract_rootfs(oci_dir, tag, &e.extract_dir)
         }
         SubCommand::EnableFsVerity(v) => {
-            let oci_dir = Path::new(&v.oci_dir);
+            let (oci_dir, tag) = parse_oci_dir(&v.oci_dir)?;
+            let oci_dir = Path::new(oci_dir);
             let oci_dir = fs::canonicalize(oci_dir)?;
             let image = Image::open(&oci_dir)?;
-            enable_fs_verity(image, &v.tag, &v.root_hash)?;
+            enable_fs_verity(image, tag, &v.root_hash)?;
             Ok(())
         }
     }

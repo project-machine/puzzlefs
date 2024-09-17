@@ -81,12 +81,9 @@ fn test_fs_verity() -> anyhow::Result<()> {
     let rootfs = Path::new("../puzzlefs-lib/src/builder/test/test-1/");
 
     let oci = mount_path.join("oci");
-    let output = puzzlefs([
-        OsStr::new("build"),
-        rootfs.as_ref(),
-        oci.as_ref(),
-        OsStr::new("test"),
-    ])?;
+    let mut oci_arg = oci.clone().into_os_string();
+    oci_arg.push(OsStr::new(":test"));
+    let output = puzzlefs([OsStr::new("build"), rootfs.as_ref(), oci_arg.as_ref()])?;
 
     let tokens = output.split_whitespace().collect::<Vec<_>>();
 
@@ -101,8 +98,7 @@ fn test_fs_verity() -> anyhow::Result<()> {
 
     puzzlefs([
         OsStr::new("enable-fs-verity"),
-        oci.as_ref(),
-        OsStr::new("test"),
+        oci_arg.as_ref(),
         OsStr::new(digest),
     ])?;
 
@@ -118,8 +114,7 @@ fn test_fs_verity() -> anyhow::Result<()> {
         OsStr::new("-f"),
         OsStr::new("-d"),
         OsStr::new(RANDOM_DIGEST),
-        oci.as_ref(),
-        OsStr::new("test"),
+        oci_arg.as_ref(),
         OsStr::new(&puzzlefs_mountpoint),
     ]);
 
@@ -133,8 +128,7 @@ fn test_fs_verity() -> anyhow::Result<()> {
         OsStr::new("mount"),
         OsStr::new("-d"),
         OsStr::new(digest),
-        oci.as_ref(),
-        OsStr::new("test"),
+        oci_arg.as_ref(),
         OsStr::new(&puzzlefs_mountpoint),
     ])?;
 
