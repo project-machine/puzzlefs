@@ -21,6 +21,8 @@ jobs:
             - run: make lint check
             - name: publish
               if: startsWith(github.ref, 'refs/tags/') && github.event_name == 'push'
-              run: cargo publish --token ${CRATES_TOKEN}
+              run: |
+                cargo publish -p puzzlefs-lib --token ${CRATES_TOKEN}
+                cargo publish -p puzzlefs --token ${CRATES_TOKEN}
               env:
                 CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
