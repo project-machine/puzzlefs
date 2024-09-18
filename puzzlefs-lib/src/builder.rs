@@ -5,6 +5,7 @@ use crate::fsverity_helpers::{
 };
 use crate::oci::Digest;
 use std::any::Any;
+use std::backtrace::Backtrace;
 use std::cmp::min;
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::{OsStr, OsString};
@@ -399,7 +400,7 @@ pub fn build_initial_rootfs<C: Compression + Any>(
     tag: &str,
 ) -> Result<Descriptor> {
     let mut verity_data: VerityData = BTreeMap::new();
-    let mut image_manifest = Image::get_empty_manifest()?;
+    let mut image_manifest = oci.get_empty_manifest()?;
     let inodes = build_delta::<C>(rootfs, oci, None, &mut verity_data, &mut image_manifest)?;
 
     let rootfs_buf = serialize_metadata(Rootfs {
@@ -430,7 +431,7 @@ pub fn add_rootfs_delta<C: Compression + Any>(
     base_layer: &str,
 ) -> Result<(Descriptor, Arc<Image>)> {
     let mut verity_data: VerityData = BTreeMap::new();
-    let mut image_manifest = Image::get_empty_manifest()?;
+    let mut image_manifest = oci.get_empty_manifest()?;
 
     let pfs = PuzzleFS::open(oci, base_layer, None)?;
     let oci = Arc::clone(&pfs.oci);
@@ -462,11 +463,9 @@ pub fn add_rootfs_delta<C: Compression + Any>(
     Ok((rootfs_descriptor, oci))
 }
 
-pub fn enable_fs_verity(oci: Image, tag: &str, manifest_root_hash: &str) -> Result<()> {
-    // first enable fs verity for the puzzlefs image manifest
-    let manifest_fd = oci.get_image_manifest_fd(tag)?;
+fn enable_verity_for_file(file: &cap_std::fs::File) -> Result<()> {
     if let Err(e) = fsverity_enable(
-        manifest_fd.as_raw_fd(),
+        file.as_raw_fd(),
         FS_VERITY_BLOCK_SIZE_DEFAULT,
         InnerHashAlgorithm::Sha256,
         &[],
@@ -476,26 +475,35 @@ pub fn enable_fs_verity(oci: Image, tag: &str, manifest_root_hash: &str) -> Resu
             return Err(WireFormatError::from(e));
         }
     }
-    check_fs_verity(&manifest_fd, &hex::decode(manifest_root_hash)?[..])?;
+    Ok(())
+}
+
+fn enable_and_check_verity_for_file(file: &cap_std::fs::File, expected: &[u8]) -> Result<()> {
+    enable_verity_for_file(file)?;
+    check_fs_verity(file, expected)
+}
+
+pub fn enable_fs_verity(oci: Image, tag: &str, manifest_root_hash: &str) -> Result<()> {
+    // first enable fs verity for the puzzlefs image manifest
+    let manifest_fd = oci.get_image_manifest_fd(tag)?;
+    enable_and_check_verity_for_file(&manifest_fd, &hex::decode(manifest_root_hash)?[..])?;
 
     let pfs = PuzzleFS::open(oci, tag, None)?;
     let oci = Arc::clone(&pfs.oci);
     let rootfs = oci.open_rootfs_blob(tag, None)?;
 
     let rootfs_fd = oci.get_pfs_rootfs(tag, None)?;
-    if let Err(e) = fsverity_enable(
-        rootfs_fd.as_raw_fd(),
-        FS_VERITY_BLOCK_SIZE_DEFAULT,
-        InnerHashAlgorithm::Sha256,
-        &[],
-    ) {
-        // if fsverity is enabled, ignore the error
-        if e.kind() != std::io::ErrorKind::AlreadyExists {
-            return Err(WireFormatError::from(e));
-        }
-    }
     let rootfs_verity = oci.get_pfs_rootfs_verity(tag)?;
-    check_fs_verity(&rootfs_fd, &rootfs_verity[..])?;
+
+    enable_and_check_verity_for_file(&rootfs_fd, &rootfs_verity[..])?;
+
+    let manifest = oci
+        .0
+        .find_manifest_with_tag(tag)?
+        .ok_or_else(|| WireFormatError::MissingManifest(tag.to_string(), Backtrace::capture()))?;
+    let config_digest = manifest.config().digest().digest();
+    let config_digest_path = oci.blob_path().join(config_digest);
+    enable_verity_for_file(&oci.0.dir.open(config_digest_path)?)?;
 
     for (content_addressed_file, verity_hash) in rootfs.get_verity_data()? {
         let file_path = oci
