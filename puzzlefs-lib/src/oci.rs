@@ -3,6 +3,7 @@ use std::any::Any;
 use std::backtrace::Backtrace;
 use std::fs;
 use std::io;
+use std::io::Write;
 use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 
@@ -121,7 +122,16 @@ impl Image {
         } else {
             self.0.dir.write(&path, final_data)?;
         }
-        image_manifest.layers_mut().push(descriptor.clone());
+
+        // Let's make the PuzzleFS image rootfs the first layer so it's easy to find
+        // The LXC oci template also looks at the first layer in the array to identify the image
+        // type (see getlayermediatype):
+        // https://github.com/lxc/lxc/commit/1a2da75b6e8431f3530ebd3f75442d3bd5eec5e2
+        if media_type.name() == PUZZLEFS_ROOTFS {
+            image_manifest.layers_mut().insert(0, descriptor.clone());
+        } else {
+            image_manifest.layers_mut().push(descriptor.clone());
+        }
         Ok((descriptor, fs_verity_digest, compressed_blob))
     }
 
@@ -266,13 +276,8 @@ impl Image {
             .ok_or_else(|| OciSpecError::Other("missing OCI index".to_string()))?)
     }
 
-    pub fn get_empty_manifest() -> Result<ImageManifest> {
+    pub fn get_empty_manifest(&self) -> Result<ImageManifest> {
         // see https://github.com/opencontainers/image-spec/blob/main/manifest.md#guidance-for-an-empty-descriptor
-        // TODO: write the empty blob to blobs/sha256, otherwise skopeo won't be able to copy the image
-        // the fs verity test will also need changes because currently it makes sure that verity is
-        // enabled for every blob in blobs/sha256; one thing we could do is enable verity but skip
-        // checking if the digests match or add the verity annotations for each descriptor; another
-        // way is to only check the verity data for the PuzzleFS rootfs and file chunks
         let config = DescriptorBuilder::default()
             .media_type(MediaType::EmptyJSON)
             .size(2_u32)
@@ -281,6 +286,17 @@ impl Image {
             )?)
             .data("e30=")
             .build()?;
+
+        if !self.0.dir.exists(
+            self.blob_path()
+                .join("44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"),
+        ) {
+            let mut blob = self.0.create_blob()?;
+            blob.write_all("{}".as_bytes())?;
+            // TODO: blob.complete_verified_as(&config)? once https://github.com/containers/ocidir-rs/pull/18 is merged
+            blob.complete()?;
+        }
+
         let image_manifest = ImageManifestBuilder::default()
             .schema_version(2_u32)
             .config(config)
@@ -301,8 +317,8 @@ mod tests {
     #[test]
     fn test_put_blob_correct_hash() -> anyhow::Result<()> {
         let dir = tempdir()?;
-        let mut image_manifest = Image::get_empty_manifest()?;
         let image: Image = Image::new(dir.path())?;
+        let mut image_manifest = image.get_empty_manifest()?;
         let (desc, ..) = image.put_blob::<Noop>(
             "meshuggah rocks".as_bytes(),
             &mut image_manifest,
@@ -332,7 +348,7 @@ mod tests {
     fn test_put_get_index() -> anyhow::Result<()> {
         let dir = tempdir()?;
         let image = Image::new(dir.path())?;
-        let mut image_manifest = Image::get_empty_manifest()?;
+        let mut image_manifest = image.get_empty_manifest()?;
         let mut annotations = HashMap::new();
         annotations.insert(ANNOTATION_REF_NAME.to_string(), "foo".to_string());
         image_manifest.set_annotations(Some(annotations));
@@ -355,8 +371,8 @@ mod tests {
     #[test]
     fn double_put_ok() -> anyhow::Result<()> {
         let dir = tempdir()?;
-        let mut image_manifest = Image::get_empty_manifest()?;
         let image = Image::new(dir.path())?;
+        let mut image_manifest = image.get_empty_manifest()?;
         let desc1 = image.put_blob::<DefaultCompression>(
             "meshuggah rocks".as_bytes(),
             &mut image_manifest,
