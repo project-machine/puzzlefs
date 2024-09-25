@@ -40,7 +40,7 @@ os_pipe = "1.1.2"
 tempfile = "3.10"
 openat = "0.1.21"
 zstd-seekable = "0.1.23"
-ocidir = "0.3.0"
+ocidir = {git="https://github.com/containers/ocidir-rs"}
 cap-std = "3.2.0"
 
 

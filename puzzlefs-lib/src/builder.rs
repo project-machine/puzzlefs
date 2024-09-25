@@ -502,14 +502,12 @@ pub fn enable_fs_verity(oci: Image, tag: &str, manifest_root_hash: &str) -> Resu
         .find_manifest_with_tag(tag)?
         .ok_or_else(|| WireFormatError::MissingManifest(tag.to_string(), Backtrace::capture()))?;
     let config_digest = manifest.config().digest().digest();
-    let config_digest_path = oci.blob_path().join(config_digest);
-    enable_verity_for_file(&oci.0.dir.open(config_digest_path)?)?;
+    let config_digest_path = Image::blob_path().join(config_digest);
+    enable_verity_for_file(&oci.0.dir().open(config_digest_path)?)?;
 
     for (content_addressed_file, verity_hash) in rootfs.get_verity_data()? {
-        let file_path = oci
-            .blob_path()
-            .join(Digest::new(&content_addressed_file).to_string());
-        let fd = oci.0.dir.open(&file_path)?;
+        let file_path = Image::blob_path().join(Digest::new(&content_addressed_file).to_string());
+        let fd = oci.0.dir().open(&file_path)?;
         if let Err(e) = fsverity_enable(
             fd.as_raw_fd(),
             FS_VERITY_BLOCK_SIZE_DEFAULT,
@@ -564,8 +562,8 @@ pub mod tests {
 
         let md = image
             .0
-            .dir
-            .symlink_metadata(image.blob_path().join(FILE_DIGEST))
+            .dir()
+            .symlink_metadata(Image::blob_path().join(FILE_DIGEST))
             .unwrap();
         assert!(md.is_file());
 
@@ -662,8 +660,8 @@ pub mod tests {
         matching == a.len()
     }
 
-    fn get_image_blobs(image: &Image) -> Vec<OsString> {
-        WalkDir::new(image.blob_path())
+    fn get_image_blobs() -> Vec<OsString> {
+        WalkDir::new(Image::blob_path())
             .contents_first(false)
             .follow_links(false)
             .same_file_system(true)
@@ -685,7 +683,7 @@ pub mod tests {
 
         for (i, image) in images.iter().enumerate() {
             build_test_fs(path, image, "test").unwrap();
-            let ents = get_image_blobs(image);
+            let ents = get_image_blobs();
             sha_suite.push(ents);
 
             if i != 0 && !do_vecs_match(&sha_suite[i - 1], &sha_suite[i]) {
@@ -708,7 +706,7 @@ pub mod tests {
 
         for (i, image) in images.iter().enumerate() {
             build_test_fs(&path[i], image, "test").unwrap();
-            let ents = get_image_blobs(image);
+            let ents = get_image_blobs();
             sha_suite.push(ents);
 
             if i != 0 && !do_vecs_match(&sha_suite[i - 1], &sha_suite[i]) {

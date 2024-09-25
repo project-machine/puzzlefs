@@ -20,7 +20,6 @@ pub use ocidir::oci_spec::image::Descriptor;
 use ocidir::oci_spec::image::{
     DescriptorBuilder, ImageIndex, ImageManifest, ImageManifestBuilder, MediaType, Sha256Digest,
 };
-use ocidir::oci_spec::OciSpecError;
 use ocidir::OciDir;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -36,18 +35,22 @@ impl Image {
     pub fn new(oci_dir: &Path) -> Result<Self> {
         fs::create_dir_all(oci_dir)?;
         let d = cap_std::fs::Dir::open_ambient_dir(oci_dir, cap_std::ambient_authority())?;
-        let oci_dir = OciDir::ensure(&d)?;
+        let oci_dir = OciDir::ensure(d)?;
 
         Ok(Self(oci_dir))
     }
 
     pub fn open(oci_dir: &Path) -> Result<Self> {
         let d = cap_std::fs::Dir::open_ambient_dir(oci_dir, cap_std::ambient_authority())?;
-        let oci_dir = OciDir::open(&d)?;
+        let blobs_dir = cap_std::fs::Dir::open_ambient_dir(
+            oci_dir.join(Self::blob_path()),
+            cap_std::ambient_authority(),
+        )?;
+        let oci_dir = OciDir::open_with_external_blobs(d, blobs_dir)?;
         Ok(Self(oci_dir))
     }
 
-    pub fn blob_path(&self) -> PathBuf {
+    pub fn blob_path() -> PathBuf {
         // TODO: use BLOBDIR constant from ocidir after making it public
         PathBuf::from("blobs/sha256")
     }
@@ -103,12 +106,12 @@ impl Image {
             );
             descriptor.set_annotations(Some(annotations));
         }
-        let path = self.blob_path().join(descriptor.digest().digest());
+        let path = Self::blob_path().join(descriptor.digest().digest());
 
         // avoid replacing the data blob so we don't drop fsverity data
-        if self.0.dir.exists(&path) {
+        if self.0.dir().exists(&path) {
             let mut hasher = Sha256::new();
-            let mut file = self.0.dir.open(&path)?;
+            let mut file = self.0.dir().open(&path)?;
             io::copy(&mut file, &mut hasher)?;
             let existing_digest = hasher.finalize();
             if existing_digest != digest {
@@ -120,7 +123,7 @@ impl Image {
                 .into());
             }
         } else {
-            self.0.dir.write(&path, final_data)?;
+            self.0.dir().write(&path, final_data)?;
         }
 
         // Let's make the PuzzleFS image rootfs the first layer so it's easy to find
@@ -136,7 +139,7 @@ impl Image {
     }
 
     fn open_raw_blob(&self, digest: &str, verity: Option<&[u8]>) -> io::Result<cap_std::fs::File> {
-        let file = self.0.dir.open(self.blob_path().join(digest))?;
+        let file = self.0.blobs_dir().open(digest)?;
         if let Some(verity) = verity {
             check_fs_verity(&file, verity).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
         }
@@ -270,10 +273,7 @@ impl Image {
     }
 
     pub fn get_index(&self) -> Result<ImageIndex> {
-        Ok(self
-            .0
-            .read_index()?
-            .ok_or_else(|| OciSpecError::Other("missing OCI index".to_string()))?)
+        Ok(self.0.read_index()?)
     }
 
     pub fn get_empty_manifest(&self) -> Result<ImageManifest> {
@@ -287,8 +287,8 @@ impl Image {
             .data("e30=")
             .build()?;
 
-        if !self.0.dir.exists(
-            self.blob_path()
+        if !self.0.dir().exists(
+            Self::blob_path()
                 .join("44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"),
         ) {
             let mut blob = self.0.create_blob()?;
@@ -330,8 +330,8 @@ mod tests {
 
         let md = image
             .0
-            .dir
-            .symlink_metadata(image.blob_path().join(DIGEST))?;
+            .dir()
+            .symlink_metadata(Image::blob_path().join(DIGEST))?;
         assert!(md.is_file());
         Ok(())
     }
