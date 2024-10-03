@@ -15,7 +15,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.75"
-nix = "0.27.1"
+nix = {version = "0.27.1", features = ["mount"] }
 clap = { version = "4.0.18", features = ["derive"] }
 # Version 0.5 drops exit_action so we're stuck with 0.4
 daemonize = "0.4.1"
@@ -26,6 +26,7 @@ syslog = "6.0.1"
 os_pipe = "1.1.2"
 puzzlefs-lib = { path = "../puzzlefs-lib", version = "0.2.0" }
 hex = "0.4.3"
+libmount = "0.1.15"
 
 [dev-dependencies]
 assert_cmd = "2.0.12"
