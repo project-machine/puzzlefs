@@ -12,6 +12,7 @@ pub mod fsverity_helpers;
 pub mod oci;
 pub mod reader;
 
+#[allow(clippy::needless_lifetimes)]
 pub mod metadata_capnp {
     include!(concat!(env!("OUT_DIR"), "/metadata_capnp.rs"));
 }

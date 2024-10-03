@@ -48,7 +48,7 @@ impl<'a> WalkPuzzleFS<'a> {
     }
 }
 
-impl<'a> Iterator for WalkPuzzleFS<'a> {
+impl Iterator for WalkPuzzleFS<'_> {
     type Item = Result<DirEntry>;
 
     fn next(&mut self) -> Option<Self::Item> {
