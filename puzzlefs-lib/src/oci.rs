@@ -27,7 +27,6 @@ use std::str::FromStr;
 use std::io::Cursor;
 
 pub mod media_types;
-const OCI_TAG_ANNOTATION: &str = "org.opencontainers.image.ref.name";
 
 pub struct Image(pub OciDir);
 
@@ -204,21 +203,10 @@ impl Image {
         Ok(file)
     }
 
-    // TODO: export this function from ocidr / find another way to avoid code duplication
-    fn descriptor_is_tagged(d: &Descriptor, tag: &str) -> bool {
-        d.annotations()
-            .as_ref()
-            .and_then(|annos| annos.get(OCI_TAG_ANNOTATION))
-            .filter(|tagval| tagval.as_str() == tag)
-            .is_some()
-    }
-
     pub fn get_image_manifest_fd(&self, tag: &str) -> Result<cap_std::fs::File> {
-        let index = self.get_index()?;
-        let image_manifest = index
-            .manifests()
-            .iter()
-            .find(|desc| Self::descriptor_is_tagged(desc, tag))
+        let image_manifest = self
+            .0
+            .find_manifest_descriptor_with_tag(tag)?
             .ok_or_else(|| {
                 WireFormatError::MissingManifest(tag.to_string(), Backtrace::capture())
             })?;
