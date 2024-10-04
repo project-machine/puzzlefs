@@ -64,6 +64,8 @@ struct Mount {
     digest: Option<String>,
     #[arg(short, long, conflicts_with = "foreground")]
     writable: bool,
+    #[arg(short, long, conflicts_with = "foreground")]
+    persist: Option<String>,
 }
 
 #[derive(Args)]
@@ -229,7 +231,7 @@ fn main() -> anyhow::Result<()> {
                 init_syslog(log_level)?;
             }
 
-            if m.writable && !Uid::effective().is_root() {
+            if (m.writable || m.persist.is_some()) && !Uid::effective().is_root() {
                 anyhow::bail!("Writable mounts can only be created by the root user!")
             }
 
@@ -242,8 +244,8 @@ fn main() -> anyhow::Result<()> {
 
             let manifest_verity = m.digest.map(hex::decode).transpose()?;
 
-            if m.writable {
-                // We only support background mounts with the writable flag
+            if m.writable || m.persist.is_some() {
+                // We only support background mounts with the writable|persist flag
                 let (recv, mut init_notify) = os_pipe::pipe()?;
                 let pfs_mountpoint = mountpoint.join("ro");
                 fs::create_dir_all(&pfs_mountpoint)?;
@@ -259,7 +261,10 @@ fn main() -> anyhow::Result<()> {
                     move || {
                         let ovl_workdir = mountpoint.join("work");
                         fs::create_dir_all(&ovl_workdir)?;
-                        let ovl_upperdir = mountpoint.join("upper");
+                        let ovl_upperdir = match m.persist {
+                            None => mountpoint.join("upper"),
+                            Some(upperdir) => Path::new(&upperdir).to_path_buf(),
+                        };
                         fs::create_dir_all(&ovl_upperdir)?;
                         let overlay = Overlay::writable(
                             [pfs_mountpoint.as_path()].into_iter(),
