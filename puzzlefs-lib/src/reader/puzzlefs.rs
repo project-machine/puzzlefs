@@ -42,11 +42,7 @@ pub(crate) fn file_read(
             continue;
         }
 
-        let addl_offset = if offset > file_offset {
-            offset - file_offset
-        } else {
-            0
-        };
+        let addl_offset = offset.saturating_sub(file_offset);
 
         // ok, need to read this chunk; how much?
         let left_in_buf = data.len() - buf_offset;

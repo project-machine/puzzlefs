@@ -67,13 +67,13 @@ pub struct ZstdDecompressor<'a, R: Read + Seek> {
     uncompressed_length: u64,
 }
 
-impl<'a, R: Seek + Read> Decompressor for ZstdDecompressor<'a, R> {
+impl<R: Seek + Read> Decompressor for ZstdDecompressor<'_, R> {
     fn get_uncompressed_length(&mut self) -> io::Result<u64> {
         Ok(self.uncompressed_length)
     }
 }
 
-impl<'a, R: Seek + Read> Seek for ZstdDecompressor<'a, R> {
+impl<R: Seek + Read> Seek for ZstdDecompressor<'_, R> {
     fn seek(&mut self, offset: io::SeekFrom) -> io::Result<u64> {
         match offset {
             io::SeekFrom::Start(s) => {
@@ -97,7 +97,7 @@ impl<'a, R: Seek + Read> Seek for ZstdDecompressor<'a, R> {
     }
 }
 
-impl<'a, R: Seek + Read> Read for ZstdDecompressor<'a, R> {
+impl<R: Seek + Read> Read for ZstdDecompressor<'_, R> {
     fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
         // decompress() gets angry (ZSTD("Corrupted block detected")) if you pass it a buffer
         // longer than the uncompressable data, so let's be careful to truncate the buffer if it

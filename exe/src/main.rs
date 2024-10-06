@@ -1,7 +1,11 @@
 use clap::{Args, Parser, Subcommand};
 use daemonize::Daemonize;
 use env_logger::Env;
+use libmount::mountinfo;
+use libmount::Overlay;
 use log::{error, info, LevelFilter};
+use nix::mount::umount;
+use nix::unistd::Uid;
 use os_pipe::{PipeReader, PipeWriter};
 use puzzlefs_lib::{
     builder::{add_rootfs_delta, build_initial_rootfs, enable_fs_verity},
@@ -11,6 +15,7 @@ use puzzlefs_lib::{
     oci::Image,
     reader::{fuse::PipeDescriptor, mount, spawn_mount},
 };
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::prelude::*;
@@ -30,6 +35,7 @@ struct Opts {
 enum SubCommand {
     Build(Build),
     Mount(Mount),
+    Umount(Umount),
     Extract(Extract),
     EnableFsVerity(FsVerity),
 }
@@ -56,6 +62,15 @@ struct Mount {
     options: Option<Vec<String>>,
     #[arg(short, long, value_name = "fs verity root digest")]
     digest: Option<String>,
+    #[arg(short, long, conflicts_with = "foreground")]
+    writable: bool,
+    #[arg(short, long, conflicts_with = "foreground")]
+    persist: Option<String>,
+}
+
+#[derive(Args)]
+struct Umount {
+    mountpoint: String,
 }
 
 #[derive(Args)]
@@ -106,6 +121,7 @@ fn init_syslog(log_level: &str) -> std::io::Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn mount_background(
     image: Image,
     tag: &str,
@@ -114,6 +130,7 @@ fn mount_background(
     manifest_verity: Option<Vec<u8>>,
     mut recv: PipeReader,
     init_notify: &PipeWriter,
+    parent_action: impl FnOnce() -> anyhow::Result<()> + 'static,
 ) -> anyhow::Result<()> {
     let daemonize = Daemonize::new().exit_action(move || {
         let mut read_buffer = [0];
@@ -123,6 +140,9 @@ fn mount_background(
             // in case of failure, 'f' is written into the pipe
             // we explicitly exit with an error code, otherwise exit(0) is done by daemonize
             exit(1);
+        }
+        if let Err(e) = parent_action() {
+            error!("parent_action error {e}");
         }
     });
 
@@ -151,6 +171,20 @@ fn parse_oci_dir(oci_dir: &str) -> anyhow::Result<(&str, &str)> {
     }
 
     Ok((components[0], components[1]))
+}
+
+fn get_mount_type(mountpoint: &str) -> anyhow::Result<OsString> {
+    let contents = fs::read_to_string("/proc/self/mountinfo")?;
+    let mut parser = mountinfo::Parser::new(contents.as_bytes());
+    let mount_info = parser.find(|mount_info| {
+        mount_info
+            .as_ref()
+            .map(|mount_info| mount_info.mount_point == OsStr::new(mountpoint))
+            .unwrap_or(false)
+    });
+    let mount_info = mount_info
+        .ok_or_else(|| anyhow::anyhow!("cannot find mountpoint in /proc/self/mountpoints"))??;
+    Ok(mount_info.fstype.into_owned())
 }
 
 fn main() -> anyhow::Result<()> {
@@ -197,6 +231,10 @@ fn main() -> anyhow::Result<()> {
                 init_syslog(log_level)?;
             }
 
+            if (m.writable || m.persist.is_some()) && !Uid::effective().is_root() {
+                anyhow::bail!("Writable mounts can only be created by the root user!")
+            }
+
             let (oci_dir, tag) = parse_oci_dir(&m.oci_dir)?;
             let oci_dir = Path::new(oci_dir);
             let oci_dir = fs::canonicalize(oci_dir)?;
@@ -205,6 +243,46 @@ fn main() -> anyhow::Result<()> {
             let mountpoint = fs::canonicalize(mountpoint)?;
 
             let manifest_verity = m.digest.map(hex::decode).transpose()?;
+
+            if m.writable || m.persist.is_some() {
+                // We only support background mounts with the writable|persist flag
+                let (recv, mut init_notify) = os_pipe::pipe()?;
+                let pfs_mountpoint = mountpoint.join("ro");
+                fs::create_dir_all(&pfs_mountpoint)?;
+
+                if let Err(e) = mount_background(
+                    image,
+                    tag,
+                    &pfs_mountpoint.clone(),
+                    m.options,
+                    manifest_verity,
+                    recv,
+                    &init_notify,
+                    move || {
+                        let ovl_workdir = mountpoint.join("work");
+                        fs::create_dir_all(&ovl_workdir)?;
+                        let ovl_upperdir = match m.persist {
+                            None => mountpoint.join("upper"),
+                            Some(upperdir) => Path::new(&upperdir).to_path_buf(),
+                        };
+                        fs::create_dir_all(&ovl_upperdir)?;
+                        let overlay = Overlay::writable(
+                            [pfs_mountpoint.as_path()].into_iter(),
+                            ovl_upperdir,
+                            ovl_workdir,
+                            &mountpoint,
+                        );
+                        overlay.mount().map_err(|e| anyhow::anyhow!("{e}"))
+                    },
+                ) {
+                    if let Err(e) = init_notify.write_all(b"f") {
+                        error!("puzzlefs will hang because we couldn't write to pipe, {e}");
+                    }
+                    error!("mount_background failed: {e}");
+                    return Err(e);
+                }
+                return Ok(());
+            }
 
             if m.foreground {
                 let (send, recv) = std::sync::mpsc::channel();
@@ -257,6 +335,7 @@ fn main() -> anyhow::Result<()> {
                     manifest_verity,
                     recv,
                     &init_notify,
+                    || Ok(()),
                 ) {
                     if let Err(e) = init_notify.write_all(b"f") {
                         error!("puzzlefs will hang because we couldn't write to pipe, {e}");
@@ -264,6 +343,54 @@ fn main() -> anyhow::Result<()> {
                     error!("mount_background failed: {e}");
                     return Err(e);
                 }
+            }
+
+            Ok(())
+        }
+        SubCommand::Umount(e) => {
+            let mountpoint = Path::new(&e.mountpoint);
+            let mount_type = get_mount_type(&e.mountpoint)?;
+            match mount_type.to_str() {
+                Some("overlay") => {
+                    if !Uid::effective().is_root() {
+                        anyhow::bail!("Overlay mounts can only be unmounted by the root user!")
+                    }
+                    umount(mountpoint)?;
+                    // Now unmount the read-only puzzlefs mountpoint
+                    let pfs_mountpoint = mountpoint.join("ro");
+                    umount(pfs_mountpoint.as_os_str())?;
+                    // TODO: Decide whether to remove the directories we've created. For the LXC
+                    // case, we don't want to remove them because we want to persist state between
+                    // multiple mounts. Should we add a --delete flag to unmount?
+                    // let ovl_workdir = mountpoint.join("work");
+                    // let ovl_upperdir = mountpoint.join("upper");
+                    // std::fs::remove_dir_all(&pfs_mountpoint)?;
+                    // std::fs::remove_dir_all(&ovl_workdir)?;
+                    // std::fs::remove_dir_all(&ovl_upperdir)?;
+                    return Ok(());
+                }
+                Some("fuse") => {
+                    // We call "fusermount -u" because we don't have permissions to umount directly
+                    // fusermount and umount binaries have the setuid bit set
+                    let status = std::process::Command::new("fusermount")
+                        .arg("-u")
+                        .arg(&e.mountpoint)
+                        .status()?;
+                    if !status.success() {
+                        anyhow::bail!(
+                            "umount exited with status {}",
+                            status
+                                .code()
+                                .map(|code| code.to_string())
+                                .unwrap_or("terminated by signal".to_string())
+                        );
+                    }
+                }
+                _ => anyhow::bail!(
+                    "Unknown mountpoint type {} for {}",
+                    mount_type.to_str().unwrap_or("unknown mount type"),
+                    &e.mountpoint
+                ),
             }
 
             Ok(())
