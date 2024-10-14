@@ -3,7 +3,6 @@ use std::any::Any;
 use std::backtrace::Backtrace;
 use std::fs;
 use std::io;
-use std::io::Write;
 use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 
@@ -17,9 +16,7 @@ pub use crate::format::Digest;
 use crate::oci::media_types::{PuzzleFSMediaType, PUZZLEFS_ROOTFS, VERITY_ROOT_HASH_ANNOTATION};
 use ocidir::oci_spec::image;
 pub use ocidir::oci_spec::image::Descriptor;
-use ocidir::oci_spec::image::{
-    DescriptorBuilder, ImageIndex, ImageManifest, ImageManifestBuilder, MediaType, Sha256Digest,
-};
+use ocidir::oci_spec::image::{ImageIndex, ImageManifest, MediaType};
 use ocidir::OciDir;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -265,32 +262,7 @@ impl Image {
     }
 
     pub fn get_empty_manifest(&self) -> Result<ImageManifest> {
-        // see https://github.com/opencontainers/image-spec/blob/main/manifest.md#guidance-for-an-empty-descriptor
-        let config = DescriptorBuilder::default()
-            .media_type(MediaType::EmptyJSON)
-            .size(2_u32)
-            .digest(Sha256Digest::from_str(
-                "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
-            )?)
-            .data("e30=")
-            .build()?;
-
-        if !self.0.dir().exists(
-            Self::blob_path()
-                .join("44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"),
-        ) {
-            let mut blob = self.0.create_blob()?;
-            blob.write_all("{}".as_bytes())?;
-            // TODO: blob.complete_verified_as(&config)? once https://github.com/containers/ocidir-rs/pull/18 is merged
-            blob.complete()?;
-        }
-
-        let image_manifest = ImageManifestBuilder::default()
-            .schema_version(2_u32)
-            .config(config)
-            .layers(Vec::new())
-            .build()?;
-        Ok(image_manifest)
+        Ok(self.0.new_empty_manifest()?.build()?)
     }
 }
 
