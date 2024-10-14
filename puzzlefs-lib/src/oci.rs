@@ -71,6 +71,7 @@ impl Image {
         let uncompressed_size = io::copy(&mut <&[u8]>::clone(&buf), &mut compressed)?;
         compressed.end()?;
         let compressed_size = compressed_data.get_ref().len() as u64;
+        let final_size = std::cmp::min(compressed_size, uncompressed_size);
 
         // store the uncompressed blob if the compressed version has bigger size
         let final_data = if compressed_blob && compressed_size >= uncompressed_size {
@@ -89,7 +90,7 @@ impl Image {
         let fs_verity_digest = get_fs_verity_digest(&compressed_data.get_ref()[..])?;
         let mut descriptor = Descriptor::new(
             MediaType::Other(media_type_with_extension),
-            uncompressed_size,
+            final_size,
             image::Digest::from_str(&digest_string)?,
         );
         // We need to store the PuzzleFS Rootfs verity digest as an annotation (obviously we cannot

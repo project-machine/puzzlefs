@@ -601,14 +601,15 @@ pub mod tests {
                 chunks[0].len,
                 decompressor.get_uncompressed_length().unwrap()
             );
-            Ok(())
         } else {
             panic!("bad inode mode: {:?}", inodes[1].mode);
-        }
+        };
+        image.0.fsck()?;
+        Ok::<(), anyhow::Error>(())
     }
 
     #[test]
-    fn test_delta_generation() {
+    fn test_delta_generation() -> anyhow::Result<()> {
         let dir = tempdir().unwrap();
         let image = Image::new(dir.path()).unwrap();
         let tag = "test";
@@ -621,6 +622,7 @@ pub mod tests {
             delta_dir.join("SekienAkashita.jpg"),
         )
         .unwrap();
+        image.0.fsck()?;
 
         let new_tag = "test2";
         let (_desc, image) =
@@ -629,6 +631,7 @@ pub mod tests {
         assert_eq!(delta.metadatas.len(), 2);
 
         let image = Image::new(dir.path()).unwrap();
+        image.0.fsck()?;
         let mut pfs = PuzzleFS::open(image, new_tag, None).unwrap();
         assert_eq!(pfs.max_inode().unwrap(), 3);
         let mut walker = WalkPuzzleFS::walk(&mut pfs).unwrap();
@@ -649,6 +652,7 @@ pub mod tests {
         assert_eq!(foo_dir.inode.dir_entries().unwrap().len(), 0);
 
         assert!(walker.next().is_none());
+        Ok(())
     }
 
     fn do_vecs_match<T: PartialEq>(a: &[T], b: &[T]) -> bool {
