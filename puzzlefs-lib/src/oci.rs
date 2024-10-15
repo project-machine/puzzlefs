@@ -3,7 +3,6 @@ use std::any::Any;
 use std::backtrace::Backtrace;
 use std::fs;
 use std::io;
-use std::io::Write;
 use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 
@@ -17,10 +16,7 @@ pub use crate::format::Digest;
 use crate::oci::media_types::{PuzzleFSMediaType, PUZZLEFS_ROOTFS, VERITY_ROOT_HASH_ANNOTATION};
 use ocidir::oci_spec::image;
 pub use ocidir::oci_spec::image::Descriptor;
-use ocidir::oci_spec::image::{
-    DescriptorBuilder, ImageIndex, ImageManifest, ImageManifestBuilder, MediaType, Sha256Digest,
-};
-use ocidir::oci_spec::OciSpecError;
+use ocidir::oci_spec::image::{ImageIndex, ImageManifest, MediaType};
 use ocidir::OciDir;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -28,7 +24,6 @@ use std::str::FromStr;
 use std::io::Cursor;
 
 pub mod media_types;
-const OCI_TAG_ANNOTATION: &str = "org.opencontainers.image.ref.name";
 
 pub struct Image(pub OciDir);
 
@@ -36,18 +31,22 @@ impl Image {
     pub fn new(oci_dir: &Path) -> Result<Self> {
         fs::create_dir_all(oci_dir)?;
         let d = cap_std::fs::Dir::open_ambient_dir(oci_dir, cap_std::ambient_authority())?;
-        let oci_dir = OciDir::ensure(&d)?;
+        let oci_dir = OciDir::ensure(d)?;
 
         Ok(Self(oci_dir))
     }
 
     pub fn open(oci_dir: &Path) -> Result<Self> {
         let d = cap_std::fs::Dir::open_ambient_dir(oci_dir, cap_std::ambient_authority())?;
-        let oci_dir = OciDir::open(&d)?;
+        let blobs_dir = cap_std::fs::Dir::open_ambient_dir(
+            oci_dir.join(Self::blob_path()),
+            cap_std::ambient_authority(),
+        )?;
+        let oci_dir = OciDir::open_with_external_blobs(d, blobs_dir)?;
         Ok(Self(oci_dir))
     }
 
-    pub fn blob_path(&self) -> PathBuf {
+    pub fn blob_path() -> PathBuf {
         // TODO: use BLOBDIR constant from ocidir after making it public
         PathBuf::from("blobs/sha256")
     }
@@ -72,6 +71,7 @@ impl Image {
         let uncompressed_size = io::copy(&mut <&[u8]>::clone(&buf), &mut compressed)?;
         compressed.end()?;
         let compressed_size = compressed_data.get_ref().len() as u64;
+        let final_size = std::cmp::min(compressed_size, uncompressed_size);
 
         // store the uncompressed blob if the compressed version has bigger size
         let final_data = if compressed_blob && compressed_size >= uncompressed_size {
@@ -90,7 +90,7 @@ impl Image {
         let fs_verity_digest = get_fs_verity_digest(&compressed_data.get_ref()[..])?;
         let mut descriptor = Descriptor::new(
             MediaType::Other(media_type_with_extension),
-            uncompressed_size,
+            final_size,
             image::Digest::from_str(&digest_string)?,
         );
         // We need to store the PuzzleFS Rootfs verity digest as an annotation (obviously we cannot
@@ -103,12 +103,12 @@ impl Image {
             );
             descriptor.set_annotations(Some(annotations));
         }
-        let path = self.blob_path().join(descriptor.digest().digest());
+        let path = Self::blob_path().join(descriptor.digest().digest());
 
         // avoid replacing the data blob so we don't drop fsverity data
-        if self.0.dir.exists(&path) {
+        if self.0.dir().exists(&path) {
             let mut hasher = Sha256::new();
-            let mut file = self.0.dir.open(&path)?;
+            let mut file = self.0.dir().open(&path)?;
             io::copy(&mut file, &mut hasher)?;
             let existing_digest = hasher.finalize();
             if existing_digest != digest {
@@ -120,7 +120,7 @@ impl Image {
                 .into());
             }
         } else {
-            self.0.dir.write(&path, final_data)?;
+            self.0.dir().write(&path, final_data)?;
         }
 
         // Let's make the PuzzleFS image rootfs the first layer so it's easy to find
@@ -136,7 +136,7 @@ impl Image {
     }
 
     fn open_raw_blob(&self, digest: &str, verity: Option<&[u8]>) -> io::Result<cap_std::fs::File> {
-        let file = self.0.dir.open(self.blob_path().join(digest))?;
+        let file = self.0.blobs_dir().open(digest)?;
         if let Some(verity) = verity {
             check_fs_verity(&file, verity).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
         }
@@ -201,21 +201,10 @@ impl Image {
         Ok(file)
     }
 
-    // TODO: export this function from ocidr / find another way to avoid code duplication
-    fn descriptor_is_tagged(d: &Descriptor, tag: &str) -> bool {
-        d.annotations()
-            .as_ref()
-            .and_then(|annos| annos.get(OCI_TAG_ANNOTATION))
-            .filter(|tagval| tagval.as_str() == tag)
-            .is_some()
-    }
-
     pub fn get_image_manifest_fd(&self, tag: &str) -> Result<cap_std::fs::File> {
-        let index = self.get_index()?;
-        let image_manifest = index
-            .manifests()
-            .iter()
-            .find(|desc| Self::descriptor_is_tagged(desc, tag))
+        let image_manifest = self
+            .0
+            .find_manifest_descriptor_with_tag(tag)?
             .ok_or_else(|| {
                 WireFormatError::MissingManifest(tag.to_string(), Backtrace::capture())
             })?;
@@ -270,39 +259,11 @@ impl Image {
     }
 
     pub fn get_index(&self) -> Result<ImageIndex> {
-        Ok(self
-            .0
-            .read_index()?
-            .ok_or_else(|| OciSpecError::Other("missing OCI index".to_string()))?)
+        Ok(self.0.read_index()?)
     }
 
     pub fn get_empty_manifest(&self) -> Result<ImageManifest> {
-        // see https://github.com/opencontainers/image-spec/blob/main/manifest.md#guidance-for-an-empty-descriptor
-        let config = DescriptorBuilder::default()
-            .media_type(MediaType::EmptyJSON)
-            .size(2_u32)
-            .digest(Sha256Digest::from_str(
-                "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
-            )?)
-            .data("e30=")
-            .build()?;
-
-        if !self.0.dir.exists(
-            self.blob_path()
-                .join("44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"),
-        ) {
-            let mut blob = self.0.create_blob()?;
-            blob.write_all("{}".as_bytes())?;
-            // TODO: blob.complete_verified_as(&config)? once https://github.com/containers/ocidir-rs/pull/18 is merged
-            blob.complete()?;
-        }
-
-        let image_manifest = ImageManifestBuilder::default()
-            .schema_version(2_u32)
-            .config(config)
-            .layers(Vec::new())
-            .build()?;
-        Ok(image_manifest)
+        Ok(self.0.new_empty_manifest()?.build()?)
     }
 }
 
@@ -330,8 +291,8 @@ mod tests {
 
         let md = image
             .0
-            .dir
-            .symlink_metadata(image.blob_path().join(DIGEST))?;
+            .dir()
+            .symlink_metadata(Image::blob_path().join(DIGEST))?;
         assert!(md.is_file());
         Ok(())
     }
