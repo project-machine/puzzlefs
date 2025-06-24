@@ -86,12 +86,7 @@ impl Compression for Zstd {
         // zstd-seekable doesn't like it when we pass a buffer past the end of the uncompressed
         // stream, so let's figure out the size of the uncompressed file so we can implement
         // ::read() in a reasonable way. This also lets us implement SeekFrom::End.
-        let uncompressed_length = (0..seek_table.num_frames())
-            .map(|i| seek_table.frame_size_decomp(i))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(err_to_io)?
-            .iter()
-            .sum();
+        let uncompressed_length = seek_table.size_decomp();
         Ok(Box::new(ZstdDecompressor {
             decoder,
             uncompressed_length,
