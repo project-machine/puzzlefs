@@ -13,6 +13,7 @@ pub mod oci;
 pub mod reader;
 
 #[allow(clippy::needless_lifetimes)]
+#[allow(clippy::uninlined_format_args)]
 pub mod metadata_capnp {
     include!(concat!(env!("OUT_DIR"), "/metadata_capnp.rs"));
 }

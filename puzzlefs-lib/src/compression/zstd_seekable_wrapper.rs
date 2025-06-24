@@ -18,7 +18,7 @@ const FRAME_SIZE: usize = 4096;
 const COMPRESSION_LEVEL: usize = 3;
 
 fn err_to_io<E: 'static + std::error::Error + Send + Sync>(e: E) -> io::Error {
-    io::Error::new(io::ErrorKind::Other, e)
+    io::Error::other(e)
 }
 
 pub struct ZstdCompressor<W> {
@@ -81,7 +81,7 @@ impl<R: Seek + Read> Seek for ZstdDecompressor<'_, R> {
             }
             io::SeekFrom::End(e) => {
                 if e > 0 {
-                    return Err(io::Error::new(io::ErrorKind::Other, "zstd seek past end"));
+                    return Err(io::Error::other("zstd seek past end"));
                 }
                 self.offset = self.uncompressed_length - u64::try_from(-e).map_err(err_to_io)?;
             }

@@ -138,7 +138,7 @@ impl Image {
     fn open_raw_blob(&self, digest: &str, verity: Option<&[u8]>) -> io::Result<cap_std::fs::File> {
         let file = self.0.blobs_dir().open(digest)?;
         if let Some(verity) = verity {
-            check_fs_verity(&file, verity).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            check_fs_verity(&file, verity).map_err(io::Error::other)?;
         }
         Ok(file)
     }

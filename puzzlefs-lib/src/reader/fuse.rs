@@ -42,11 +42,11 @@ fn mode_to_fuse_type(inode: &Inode) -> Result<FileType> {
     Ok(match inode.mode {
         InodeMode::File { .. } => FileType::RegularFile,
         InodeMode::Dir { .. } => FileType::Directory,
-        InodeMode::Fifo { .. } => FileType::NamedPipe,
+        InodeMode::Fifo => FileType::NamedPipe,
         InodeMode::Chr { .. } => FileType::CharDevice,
         InodeMode::Blk { .. } => FileType::BlockDevice,
-        InodeMode::Lnk { .. } => FileType::Symlink,
-        InodeMode::Sock { .. } => FileType::Socket,
+        InodeMode::Lnk => FileType::Symlink,
+        InodeMode::Sock => FileType::Socket,
         _ => return Err(WireFormatError::from_errno(Errno::EINVAL)),
     })
 }

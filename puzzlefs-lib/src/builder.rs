@@ -276,18 +276,12 @@ fn build_delta<C: Compression + Any>(
                 // use a new one
                 let the_ino = host_to_pfs.get(&md.ino()).copied().unwrap_or(cur_ino);
                 let parent_path = e.path().parent().map(|p| p.to_path_buf()).ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::Other,
-                        format!("no parent for {}", e.path().display()),
-                    )
+                    io::Error::other(format!("no parent for {}", e.path().display()))
                 })?;
                 let parent = dirs
                     .get_mut(&fs::symlink_metadata(parent_path)?.ino())
                     .ok_or_else(|| {
-                        io::Error::new(
-                            io::ErrorKind::Other,
-                            format!("no pfs inode for {}", e.path().display()),
-                        )
+                        io::Error::other(format!("no pfs inode for {}", e.path().display()))
                     })?;
                 parent.add_entry(
                     e.path()
@@ -445,7 +439,7 @@ pub fn add_rootfs_delta<C: Compression + Any>(
         &mut image_manifest,
     )?;
 
-    if !rootfs.metadatas.iter().any(|x| *x == inodes) {
+    if !rootfs.metadatas.contains(&inodes) {
         rootfs.metadatas.insert(0, inodes);
     }
 

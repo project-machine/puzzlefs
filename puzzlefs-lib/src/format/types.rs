@@ -397,10 +397,7 @@ impl Inode {
         additional: Option<InodeAdditional>,
     ) -> io::Result<Self> {
         if !md.is_dir() {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("{ino} is a dir"),
-            ));
+            return Err(io::Error::other(format!("{ino} is a dir")));
         }
 
         let mode = InodeMode::Dir { dir_list };
@@ -414,10 +411,7 @@ impl Inode {
         additional: Option<InodeAdditional>,
     ) -> io::Result<Self> {
         if !md.is_file() {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("{ino} is a file"),
-            ));
+            return Err(io::Error::other(format!("{ino} is a file")));
         }
 
         let mode = InodeMode::File {
@@ -439,19 +433,13 @@ impl Inode {
             let minor = stat::minor(md.rdev());
             InodeMode::Chr { major, minor }
         } else if file_type.is_dir() {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("{ino} is a dir"),
-            ));
+            return Err(io::Error::other(format!("{ino} is a dir")));
         } else if file_type.is_block_device() {
             let major = stat::major(md.rdev());
             let minor = stat::minor(md.rdev());
             InodeMode::Blk { major, minor }
         } else if file_type.is_file() {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("{ino} is a file"),
-            ));
+            return Err(io::Error::other(format!("{ino} is a file")));
         } else if file_type.is_symlink() {
             InodeMode::Lnk
         } else if file_type.is_socket() {
