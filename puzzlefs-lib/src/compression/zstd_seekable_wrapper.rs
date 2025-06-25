@@ -1,8 +1,7 @@
-use std::cmp::min;
 use std::io;
 use std::io::{Read, Seek, Write};
 
-use zstd_seekable::{CStream, Seekable, SeekableCStream};
+use zeekstd::{Decoder, EncodeOptions, Encoder, FrameSizePolicy};
 
 use crate::compression::{Compression, Compressor, Decompressor};
 
@@ -14,56 +13,36 @@ use crate::compression::{Compression, Compressor, Decompressor};
 // Another consideration is the average chunk size from FastCDC: if we make this the same as the
 // chunk size, there's no real point in using seekable compression at all, at least for files. It's
 // also possible that we want different frame sizes for metadata blobs and file content.
-const FRAME_SIZE: usize = 4096;
-const COMPRESSION_LEVEL: usize = 3;
+const FRAME_SIZE: u32 = 4096;
+const COMPRESSION_LEVEL: i32 = 3;
 
 fn err_to_io<E: 'static + std::error::Error + Send + Sync>(e: E) -> io::Error {
     io::Error::other(e)
 }
 
-pub struct ZstdCompressor<W> {
-    f: W,
-    stream: SeekableCStream,
-    buf: Vec<u8>,
+pub struct ZstdCompressor<'a, W> {
+    encoder: Encoder<'a, W>,
 }
 
-impl<W: Write> Compressor for ZstdCompressor<W> {
-    fn end(mut self: Box<Self>) -> io::Result<()> {
-        // end_stream has to be called multiple times until 0 is returned, see
-        // https://docs.rs/zstd-seekable/0.1.23/src/zstd_seekable/lib.rs.html#224-237 and
-        // https://fossies.org/linux/zstd/contrib/seekable_format/zstd_seekable.h
-        loop {
-            let size = self.stream.end_stream(&mut self.buf).map_err(err_to_io)?;
-            self.f.write_all(&self.buf[0..size])?;
-            if size == 0 {
-                break;
-            }
-        }
+impl<'a, W: Write> Compressor for ZstdCompressor<'a, W> {
+    fn end(self: Box<Self>) -> io::Result<()> {
+        self.encoder.finish().map_err(err_to_io)?;
         Ok(())
     }
 }
 
-impl<W: Write> Write for ZstdCompressor<W> {
+impl<'a, W: Write> Write for ZstdCompressor<'a, W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        // TODO: we could try to consume all the input, but for now we just consume a single block
-        let (out_pos, in_pos) = self
-            .stream
-            .compress(&mut self.buf, buf)
-            .map_err(err_to_io)?;
-        self.f.write_all(&self.buf[0..out_pos])?;
-        Ok(in_pos)
+        self.encoder.write(buf)
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        // we could self.stream.flush(), but that adversely affects compression ratio... let's
-        // cheat for now.
-        Ok(())
+        self.encoder.flush()
     }
 }
 
 pub struct ZstdDecompressor<'a, R: Read + Seek> {
-    stream: Seekable<'a, R>,
-    offset: u64,
+    decoder: Decoder<'a, R>,
     uncompressed_length: u64,
 }
 
@@ -75,40 +54,13 @@ impl<R: Seek + Read> Decompressor for ZstdDecompressor<'_, R> {
 
 impl<R: Seek + Read> Seek for ZstdDecompressor<'_, R> {
     fn seek(&mut self, offset: io::SeekFrom) -> io::Result<u64> {
-        match offset {
-            io::SeekFrom::Start(s) => {
-                self.offset = s;
-            }
-            io::SeekFrom::End(e) => {
-                if e > 0 {
-                    return Err(io::Error::other("zstd seek past end"));
-                }
-                self.offset = self.uncompressed_length - u64::try_from(-e).map_err(err_to_io)?;
-            }
-            io::SeekFrom::Current(c) => {
-                if c > 0 {
-                    self.offset += u64::try_from(c).map_err(err_to_io)?;
-                } else {
-                    self.offset -= u64::try_from(-c).map_err(err_to_io)?;
-                }
-            }
-        }
-        Ok(self.offset)
+        self.decoder.seek(offset)
     }
 }
 
 impl<R: Seek + Read> Read for ZstdDecompressor<'_, R> {
     fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
-        // decompress() gets angry (ZSTD("Corrupted block detected")) if you pass it a buffer
-        // longer than the uncompressable data, so let's be careful to truncate the buffer if it
-        // would make zstd angry. maybe soon they'll implement a real read() API :)
-        let end = min(out.len(), (self.uncompressed_length - self.offset) as usize);
-        let size = self
-            .stream
-            .decompress(&mut out[0..end], self.offset)
-            .map_err(err_to_io)?;
-        self.offset += size as u64;
-        Ok(size)
+        self.decoder.read(out)
     }
 }
 
@@ -118,26 +70,25 @@ impl Compression for Zstd {
     fn compress<'a, W: Write + 'a>(dest: W) -> io::Result<Box<dyn Compressor + 'a>> {
         // a "pretty high" compression level, since decompression should be nearly the same no
         // matter what compression level. Maybe we should turn this to 22 or whatever the max is...
-        let stream = SeekableCStream::new(COMPRESSION_LEVEL, FRAME_SIZE).map_err(err_to_io)?;
-        Ok(Box::new(ZstdCompressor {
-            f: dest,
-            stream,
-            buf: vec![0_u8; CStream::out_size()],
-        }))
+        let encoder = EncodeOptions::new()
+            .compression_level(COMPRESSION_LEVEL)
+            .frame_size_policy(FrameSizePolicy::Uncompressed(FRAME_SIZE))
+            .into_encoder(dest)
+            .map_err(err_to_io)?;
+        Ok(Box::new(ZstdCompressor { encoder }))
     }
 
     fn decompress<'a, R: Read + Seek + 'a>(source: R) -> io::Result<Box<dyn Decompressor + 'a>> {
-        let stream = Seekable::init(Box::new(source)).map_err(err_to_io)?;
+        // let decoder = Seekable::init(Box::new(source)).map_err(err_to_io)?;
+        let decoder = Decoder::new(source).map_err(err_to_io)?;
+        let seek_table = decoder.seek_table();
 
         // zstd-seekable doesn't like it when we pass a buffer past the end of the uncompressed
         // stream, so let's figure out the size of the uncompressed file so we can implement
         // ::read() in a reasonable way. This also lets us implement SeekFrom::End.
-        let uncompressed_length = (0..stream.get_num_frames())
-            .map(|i| stream.get_frame_decompressed_size(i) as u64)
-            .sum();
+        let uncompressed_length = seek_table.size_decomp();
         Ok(Box::new(ZstdDecompressor {
-            stream,
-            offset: 0,
+            decoder,
             uncompressed_length,
         }))
     }

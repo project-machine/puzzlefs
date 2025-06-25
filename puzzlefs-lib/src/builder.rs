@@ -552,7 +552,7 @@ pub mod tests {
         // there should be a blob that matches the hash of the test data, since it all gets input
         // as one chunk and there's only one file
         const FILE_DIGEST: &str =
-            "3eee1082ab3babf6c1595f1069d11ebc2a60135890a11e402e017ddd831a220d";
+            "d568d1505905ee36e66ef6f94f544a50f52c6a63574048da0cf351b8235ff42b";
 
         let md = image
             .0
