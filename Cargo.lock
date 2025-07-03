@@ -1948,8 +1948,9 @@ dependencies = [
 
 [[package]]
 name = "zeekstd"
-version = "0.4.0"
-source = "git+https://github.com/rorosen/zeekstd#a0ee112d570f6e160f615b464e546f2979cb0d0a"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "48ee50810d0fa308a167f17f08243378b36f0d9fd5e43e95c4943a1e51b7b8a5"
 dependencies = [
  "zstd-safe",
 ]
