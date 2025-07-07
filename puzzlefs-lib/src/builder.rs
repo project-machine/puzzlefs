@@ -745,7 +745,7 @@ pub mod tests {
             rootfs.display()
         );
 
-        let dirs: [_; 10] = std::array::from_fn(|i| match i % 2 == 0 {
+        let dirs: [_; 10] = std::array::from_fn(|i| match i.is_multiple_of(2) {
             // if /tmp and the current dir reside on different filesystems there are better chances
             // for read_dir (which uses readdir under the hood) to yield a different order of the files
             true => tempdir().unwrap(),
